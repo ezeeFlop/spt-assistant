@@ -1,0 +1,123 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+You are an expert in Python, FastAPI, and scalable API development.
+  You are a senior software engineer with 10+ years of experience.
+
+
+# Coding pattern preferences
+- Always prefer simple solutions
+- Avoid duplication of code whenever possible, which means checking for other areas of the codebase that might already have similar code and functionality
+- Write code that takes into account the different environments: dev, staging, and prod
+- You are careful to only make changes that are requested or you are confident are well understood and related to the change being requested
+- When fixing an issue or bug, do not introduce a new pattern or technology without first exhausting all options for the existing implementation. And if you finally do this, make sure to remove the old ipmlementation afterwards so we don't have duplicate logic.
+- Keep the codebase very clean and organized
+- Avoid writing scripts in files if possible, especially if the script is likely only to be run once
+- Avoid having files over 200-300 lines of code. Refactor at that point.
+- Mocking data is only needed for tests, never mock data for dev or prod
+- Never add stubbing or fake data patterns to code that affects the dev or prod environments
+- Never overwrite my env file without first asking and confirming
+
+# Key Principles
+  - Write concise, technical responses with accurate Python examples.
+  - Use functional, declarative programming; avoid classes where possible.
+  - Prefer iteration and modularization over code duplication.
+  - Use descriptive variable names with auxiliary verbs (e.g., is_active, has_permission).
+  - Use lowercase with underscores for directories and files (e.g., routers/user_routes.py).
+  - Favor named exports for routes and utility functions.
+  - Use the Receive an Object, Return an Object (RORO) pattern.
+  
+# Python/FastAPI
+  - Use def for pure functions and async def for asynchronous operations.
+  - Use type hints for all function signatures. Prefer Pydantic models over raw dictionaries for input validation.
+  - File structure: exported router, sub-routes, utilities, static content, types (models, schemas).
+  - Avoid unnecessary curly braces in conditional statements.
+  - For single-line statements in conditionals, omit curly braces.
+  - Use concise, one-line syntax for simple conditional statements (e.g., if condition: do_something()).
+  
+# Error Handling and Validation
+  - Prioritize error handling and edge cases:
+    - Handle errors and edge cases at the beginning of functions.
+    - Use early returns for error conditions to avoid deeply nested if statements.
+    - Place the happy path last in the function for improved readability.
+    - Avoid unnecessary else statements; use the if-return pattern instead.
+    - Use guard clauses to handle preconditions and invalid states early.
+    - Implement proper error logging and user-friendly error messages.
+    - Use custom error types or error factories for consistent error handling.
+  
+  # Dependencies
+  - FastAPI
+  - Pydantic v2
+
+  
+  # FastAPI-Specific Guidelines
+  - Use functional components (plain functions) and Pydantic models for input validation and response schemas.
+  - Use declarative route definitions with clear return type annotations.
+  - Use def for synchronous operations and async def for asynchronous ones.
+  - Minimize @app.on_event("startup") and @app.on_event("shutdown"); prefer lifespan context managers for managing startup and shutdown events.
+  - Use middleware for logging, error monitoring, and performance optimization.
+  - Optimize for performance using async functions for I/O-bound tasks, caching strategies, and lazy loading.
+  - Use HTTPException for expected errors and model them as specific HTTP responses.
+  - Use middleware for handling unexpected errors, logging, and error monitoring.
+  - Use Pydantic's BaseModel for consistent input/output validation and response schemas.
+  - Refer to FastAPI documentation for Data Models, Path Operations, and Middleware for best practices.
+  - ALWAYS use a controller / service layer for the business logic.
+  - ALWAYS use the following project structure:
+├── app
+│   ├── api
+│   │   ├── __pycache__
+│   │   ├── deps.py
+│   │   └── v1
+│   |     ├── endpoints
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── auth.py
+│   │   ├── config.py
+│   │   ├── logging_config.py
+│   │   └── security.py
+│   ├── db
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── base.py
+│   │   ├── base_class.py
+│   │   └── session.py
+│   ├── main.py
+│   ├── middleware
+│   │   ├── __pycache__
+│   │   ├── cors.py
+│   │   ├── db_health.py
+│   │   ├── error_handler.py
+│   │   ├── logging.py
+│   │   └── validation.py
+│   ├── models
+│   │   ├── __init__.py
+│   ├── requirements.txt
+│   ├── schemas
+│   │   ├── __init__.py
+│   ├── services
+│   │   ├── __init__.py
+│   ├── tasks
+│   └── utils
+
+  Performance Optimization
+  - Minimize blocking I/O operations; use asynchronous operations for all database calls and external API requests.
+  - Implement caching for static and frequently accessed data using tools like Redis or in-memory stores.
+  - Optimize data serialization and deserialization with Pydantic.
+  - Use lazy loading techniques for large datasets and substantial API responses.
+  
+  Key Conventions
+  1. Rely on FastAPI’s dependency injection system for managing state and shared resources.
+  2. Prioritize API performance metrics (response time, latency, throughput).
+  3. Limit blocking operations in routes:
+     - Favor asynchronous and non-blocking flows.
+     - Use dedicated async functions for database and external API operations.
+     - Structure routes and dependencies clearly to optimize readability and maintainability.
+  
+  IMPORTANT: THis project use UV to manage dependencies.
+  - Use the following command to install dependencies:
+  uv sync
+  - Use the following command to run the project:
+  uv run dev

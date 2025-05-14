@@ -1,0 +1,50 @@
+[project]
+name = "vad-stt-worker"
+version = "0.1.0"
+description = "VAD & STT Worker for the Voice Assistant Platform."
+authors = [{ name = "Your Name", email = "you@example.com" }]
+dependencies = [
+    "redis>=5.0.0", # For Redis pub/sub
+    "faster-whisper>=1.0.0", # For STT
+    # Silero VAD typically requires torch and torchaudio.
+    # We'll specify versions compatible with common Silero VAD examples.
+    # Exact versions might need adjustment based on Silero VAD model requirements.
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    # For Silero VAD, the models are often downloaded directly.
+    # If there's a PyPI package for silero-vad models/utils, it would be added here.
+    # For now, we assume models are handled separately or via torch.hub.
+    # FR-02 specifies silero-vad 0.4.
+    # There isn't a direct PyPI package named "silero-vad" that installs the models.
+    # We'll need to load it via torch.hub. Ensure PyTorch is installed.
+    "pydantic>=2.7.0", # For data validation/models if needed for transcript publishing
+    "pydantic-settings>=2.0.0", # Added for config loading
+    "structlog>=24.1.0", # For structured logging
+    "python-dotenv>=1.0.0", # For .env file support # Often used with audio data and by ML models
+    # "sounddevice", # Likely not needed as audio is from Redis
+    "numpy>=1.20.0",
+    "librosa>=0.11.0",
+    "soundfile>=0.12.1", # Added for decoding audio
+    "ffmpeg-python>=0.2.0", # Added ffmpeg-python
+]
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+  "mypy>=1.10.0",
+  "ruff>=0.4.4",
+]
+
+# Explicitly tell hatch which files to include for the wheel build
+[tool.hatch.build.targets.wheel]
+include = [
+    "main.py",
+    "audio_processor.py",
+    "config.py",
+    "logging_config.py",
+    "__init__.py",
+] 

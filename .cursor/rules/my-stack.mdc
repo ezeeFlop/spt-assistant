@@ -1,0 +1,41 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Technology Stack
+
+### Core Technologies
+- **Python**: Latest version with type hints throughout
+- **FastAPI**: For API implementation with async support
+- **Pydantic**: For data validation and settings management
+- you will use the UV package manager for this project !
+
+### Project Structure
+- Standard modular structure with clear separation of concerns
+- API versioning (v1, v2, etc.)
+- Controller/Service/Repository pattern
+- Utility modules for common functionality
+- Configuration module for environment-specific settings
+- Type definitions and interfaces for better code organization
+
+## Configuration Management
+- Environment-based configuration (dev/staging/prod)
+- Support for both environment variables and configuration files
+- Centralized settings management with validation
+- Secrets management for API keys and credentials
+
+## Error Management and Logging
+- Comprehensive error handling with custom exception classes
+- Structured logging with correlation IDs
+- Request/response logging middleware
+- Error classification (client errors, server errors, integration errors)
+- Detailed error responses with actionable information
+
+## Containerization and Deployment
+- Docker with multi-stage builds
+- GPU support configuration
+- Docker Compose for local development
+- Docker Swarm stack file for production
+- Kubernetes deployment manifests (optional)
+- Resource allocation guidelines

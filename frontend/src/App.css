@@ -1,0 +1,260 @@
+/* frontend/src/App.css */
+
+/* Define color palette using CSS variables */
+:root {
+  --primary-bg-color: #f8f9fa; /* Light gray - almost white */
+  --secondary-bg-color: #ffffff; /* White for cards/panels */
+  --primary-text-color: #212529; /* Dark gray - almost black */
+  --secondary-text-color: #495057; /* Medium gray */
+  --accent-color: #007bff; /* Bootstrap blue - a nice, modern accent */
+  --accent-hover-color: #0056b3;
+  --border-color: #dee2e6; /* Light gray for borders */
+  --error-color: #dc3545; /* Red for errors */
+  --success-color: #28a745; /* Green for success */
+  --font-family-sans-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-family-monospace: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  --spacing-xs: 0.25rem;  /* 4px */
+  --spacing-sm: 0.5rem;   /* 8px */
+  --spacing-md: 1rem;     /* 16px */
+  --spacing-lg: 1.5rem;   /* 24px */
+  --spacing-xl: 2rem;     /* 32px */
+
+  --border-radius: 0.375rem; /* Bootstrap's default */
+}
+
+/* Global styles */
+body {
+  margin: 0;
+  font-family: var(--font-family-sans-serif);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--primary-text-color);
+  background-color: var(--primary-bg-color);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* App container - will be added in App.tsx */
+.app-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh; /* Ensure it takes full viewport height */
+}
+
+header.app-header {
+  margin-bottom: var(--spacing-xl);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+header.app-header h1 {
+  color: var(--primary-text-color);
+  font-size: 2.5rem;
+  margin: 0;
+}
+
+header.app-header p {
+  color: var(--secondary-text-color);
+  font-size: 0.9rem;
+  margin-top: var(--spacing-xs);
+}
+
+/* Main content layout */
+.main-layout {
+  display: flex;
+  flex-direction: column; /* Default to column, can change to row with media queries */
+  gap: var(--spacing-lg);
+}
+
+@media (min-width: 768px) { /* Medium devices (tablets, 768px and up) */
+  .main-layout {
+    flex-direction: row;
+  }
+}
+
+.left-panel, .right-panel {
+  background-color: var(--secondary-bg-color);
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius);
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+  border: 1px solid var(--border-color);
+}
+
+.left-panel {
+  flex: 1; /* Takes up 1 part of the space */
+  min-width: 280px; /* Ensure it doesn't get too squished */
+}
+
+.right-panel {
+  flex: 2; /* Takes up 2 parts of the space, making it wider */
+  min-width: 320px;
+}
+
+/* Section styling within panels */
+.panel-section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.panel-section:last-child {
+  margin-bottom: 0;
+}
+
+.panel-section h2, .panel-section h3 {
+  color: var(--primary-text-color);
+  margin-top: 0;
+  margin-bottom: var(--spacing-sm);
+  font-size: 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: var(--spacing-sm);
+}
+
+/* Button styling */
+button {
+  display: inline-block;
+  font-weight: 400;
+  color: var(--secondary-bg-color);
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--accent-color);
+  border: 1px solid var(--accent-color);
+  padding: 0.5rem 1rem; /* Increased padding for better touch targets */
+  font-size: 1rem;
+  line-height: 1.5;
+  border-radius: var(--border-radius);
+  transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+button:hover {
+  background-color: var(--accent-hover-color);
+  border-color: var(--accent-hover-color);
+}
+
+button:focus {
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.5); /* Accent color focus ring */
+}
+
+button:disabled {
+  background-color: #6c757d; /* Bootstrap secondary/gray */
+  border-color: #6c757d;
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* Input and Select styling */
+select, input[type="text"], input[type="url"], input[type="number"] {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--primary-text-color);
+  background-color: var(--secondary-bg-color);
+  background-clip: padding-box;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+  box-sizing: border-box; /* Important for width: 100% */
+}
+
+select:focus, input:focus {
+  border-color: var(--accent-color);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+label {
+  display: inline-block;
+  margin-bottom: var(--spacing-sm);
+  font-weight: 500;
+}
+
+/* Utility classes */
+.text-error {
+  color: var(--error-color);
+  font-size: 0.875rem;
+  margin-top: var(--spacing-xs);
+}
+
+.text-success {
+  color: var(--success-color);
+}
+
+.mb-1 { margin-bottom: var(--spacing-sm) !important; }
+.mb-2 { margin-bottom: var(--spacing-md) !important; }
+.mb-3 { margin-bottom: var(--spacing-lg) !important; }
+
+.mt-1 { margin-top: var(--spacing-sm) !important; }
+.mt-2 { margin-top: var(--spacing-md) !important; }
+.mt-3 { margin-top: var(--spacing-lg) !important; }
+
+/* Specific component placeholder styles - will be refined */
+.transcription-display p, .llm-response-display p {
+  margin-top: 0;
+  margin-bottom: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background-color: var(--primary-bg-color); /* Slightly different background for these */
+  border-radius: var(--border-radius);
+  border: 1px solid #e9ecef; /* Lighter border */
+  word-break: break-word; /* Ensure long strings wrap */
+}
+
+.transcription-display p:last-child, .llm-response-display p:last-child {
+  margin-bottom: 0;
+}
+
+.playback-controls progress {
+  width: 100%;
+  height: 12px; /* Make progress bar a bit thicker */
+  border-radius: var(--border-radius);
+}
+
+.playback-controls progress::-webkit-progress-bar {
+  background-color: #e9ecef;
+  border-radius: var(--border-radius);
+}
+
+.playback-controls progress::-webkit-progress-value {
+  background-color: var(--accent-color);
+  border-radius: var(--border-radius);
+  transition: width 0.1s linear;
+}
+
+.playback-controls progress::-moz-progress-bar {
+  background-color: var(--accent-color);
+  border-radius: var(--border-radius);
+  transition: width 0.1s linear;
+}
+
+/* Specific styles for the SettingsPanel inputs/labels */
+.settings-panel-grid {
+  display: grid;
+  grid-template-columns: auto 1fr; /* Label and control */
+  gap: var(--spacing-sm) var(--spacing-md);
+  align-items: center;
+}
+
+.settings-panel-grid label {
+  justify-self: start;
+  margin-bottom: 0; /* Override default label margin for grid alignment */
+}
+
+.settings-panel-grid select,
+.settings-panel-grid input {
+  width: auto; /* Let the grid control the width, or set to 100% of grid cell */
+  min-width: 200px; /* Ensure they are not too small */
+}
+
+/* Waveform display styling */
+.waveform-container > div { /* Target the div WaveSurfer creates */
+  border: 1px solid var(--border-color) !important; /* Override inline styles if any */
+  border-radius: var(--border-radius);
+}
