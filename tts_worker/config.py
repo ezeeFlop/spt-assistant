@@ -34,6 +34,10 @@ class TTSServiceSettings(BaseSettings):
     AUDIO_OUTPUT_STREAM_CHANNEL_PATTERN: str = "audio_output_stream:{conversation_id}"
     TTS_ACTIVE_STATE_PREFIX: str = "tts_active_state:"
     TTS_CONTROL_CHANNEL: str = "tts_control_channel"
+    AUDIO_STREAM_CHANNEL: str = "audio_stream_channel"    # Channel to receive audio chunks from API gateway
+    TRANSCRIPT_CHANNEL: str = "transcript_channel"      # Channel to publish ASR results to
+    BARGE_IN_CHANNEL: str = "barge_in_notifications"   # Channel to publish barge-in events to
+ 
     TTS_ACTIVE_STATE_TTL_SECONDS: int = 60
 
     # Audio output format from this service

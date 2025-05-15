@@ -2,9 +2,12 @@
 # This file will contain the AudioProcessor class/functions
 
 import torch
+#import whisperx # Replaced faster_whisper
 from faster_whisper import WhisperModel
+
 import numpy as np
-from typing import Iterator, Tuple, List, Dict, Any
+from typing import Iterator, List, Dict, Any, Optional, Callable, Tuple
+from collections import deque # Added deque
 import time
 import scipy.signal
 
@@ -22,76 +25,186 @@ AUDIO_BUFFER_PREFIX_S = 2
 # This helps ensure more of an initial utterance is captured before segmentation.
 MIN_AUDIO_BUFFER_S_BEFORE_VAD = 2
 
+# VAD processing window size in samples.
+# 512 samples = 32ms at 16kHz. This is a common choice for Silero VAD.
+VAD_WINDOW_SIZE_SAMPLES = 512
+
+# Pre-roll amount in ms (how much audio we include before "start" is triggered)
+PRE_ROLL_MS = 150
+
+# Minimum duration of accumulated audio to be considered a "proper speech start"
+# This also serves as a minimum for an utterance to be transcribed.
+MIN_DURATION_FOR_PROPER_START_S = 0.75
+
 class AudioProcessor:
     def __init__(self):
         self.logger = get_logger(__name__) # Initialize instance logger
-        self.logger.info("Initializing AudioProcessor (PCM input mode)...")
+        self.logger.info("Initializing AudioProcessor (whisperx & VADIterator pattern)...")
         self.audio_buffer = np.array([], dtype=np.float32)
         
         # VAD and STT should operate at the same configured sample rate
         self.target_sample_rate = worker_settings.VAD_SAMPLING_RATE # VAD and STT expect this rate
         self.logger.info(f"Target sample rate set to: {self.target_sample_rate} Hz")
 
-        self.vad_model, vad_utils_tuple = self._load_vad_model()
-        if self.vad_model is None or vad_utils_tuple is None:
+        # VAD Model and VADIterator
+        self.vad_model, vad_utils = self._load_vad_model()
+        if self.vad_model is None or vad_utils is None:
             self.logger.error("Failed to load Silero VAD model or its utilities.")
-            raise RuntimeError("VAD model loading failed.") # Fail fast
-        else:
-            try:
-                (self.get_speech_timestamps, 
-                 _save_audio, 
-                 self.read_audio, 
-                 _VADIterator, _collect_chunks) = vad_utils_tuple
-                self.logger.info("Silero VAD model and utils loaded successfully.")
-            except ValueError as e:
-                self.logger.error(f"Error unpacking VAD utils tuple: {e}", exc_info=True)
-                raise RuntimeError(f"Failed to unpack Silero VAD utility functions: {e}")
-
-        self.logger.info(f"Loading STT model: {worker_settings.STT_MODEL_NAME} on device: {worker_settings.FINAL_STT_DEVICE} with compute_type: {worker_settings.STT_COMPUTE_TYPE}")
+            raise RuntimeError("VAD model loading failed.")
+        
         try:
+            # Unpack VADIterator specifically if it's a class, or store utils if VADIterator is created differently
+            # Assuming VADIterator is a class within utils that needs the model
+            if hasattr(vad_utils, 'VADIterator'):
+                self.vad_iterator = vad_utils.VADIterator(self.vad_model, sampling_rate=self.target_sample_rate) # Pass sampling_rate if accepted
+            else: # Fallback: get_speech_timestamps etc. are directly in utils
+                 # This branch means the example pattern VADIterator(model) might be what we need from utils
+                 # Let's assume vad_utils itself might contain VADIterator or we get it from torch.hub differently
+                 # For now, if 'VADIterator' is not a direct attribute, we log an error,
+                 # as the new pattern relies on it.
+                 # The example pattern shows:
+                 # model_vad, utils = torch.hub.load(...)
+                 # VADIterator = utils.VADIterator # or similar, depends on silero_vad structure
+                 # vad_iterator_instance = VADIterator(model_vad)
+                 # Re-evaluating based on common silero-vad usage:
+                 # (_ , _ , _, VADIteratorDirect, _) = vad_utils # Often VADIterator is one of the utils items
+                 # self.vad_iterator = VADIteratorDirect(self.vad_model, sampling_rate=self.target_sample_rate)
+                 # For safety, let's refine _load_vad_model to return VADIterator class directly if possible
+                 # Or ensure self.vad_iterator is initialized correctly based on what _load_vad_model returns
+                VADIteratorClass = getattr(vad_utils, 'VADIterator', None)
+                if VADIteratorClass:
+                    self.vad_iterator = VADIteratorClass(self.vad_model, sampling_rate=self.target_sample_rate)
+                else:
+                    # If VADIterator is directly returned by torch.hub.load as one of the utils like in the example:
+                    # (get_speech_timestamps, _, _, VADIterator_class, _) = vad_utils
+                    # self.vad_iterator = VADIterator_class(self.vad_model)
+                    # This part is tricky without knowing the exact structure of 'utils' from snakers4/silero-vad
+                    # We will assume VADIterator is findable and instantiable.
+                    # The example code directly gets VADIterator from the utils tuple.
+                    # Let's modify _load_vad_model to return the VADIterator *class*
+                    if callable(vad_utils) and hasattr(vad_utils, '__name__') and vad_utils.__name__ == 'VADIterator':
+                        # This case is unlikely, VADIterator is usually a class from the utils module
+                        self.logger.warning("vad_utils seems to be VADIterator class itself. This is unusual.")
+                        self.vad_iterator = vad_utils(self.vad_model, sampling_rate=self.target_sample_rate)
+                    elif isinstance(vad_utils, tuple) and any(hasattr(item, '__name__') and item.__name__ == 'VADIterator' for item in vad_utils if callable(item)):
+                        VADIterator_class_from_tuple = next(item for item in vad_utils if callable(item) and hasattr(item, '__name__') and item.__name__ == 'VADIterator')
+                        self.vad_iterator = VADIterator_class_from_tuple(self.vad_model, sampling_rate=self.target_sample_rate)
+                    else:
+                        self.logger.error("Could not initialize VADIterator from loaded VAD utilities.")
+                        raise RuntimeError("VADIterator initialization failed.")
+
+            self.logger.info("Silero VAD model and VADIterator initialized.")
+        except Exception as e:
+            self.logger.error(f"Error initializing VADIterator: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize VADIterator: {e}")
+
+        # STT Model (WhisperX)
+        self.logger.info(f"Loading STT model (WhisperX): {worker_settings.STT_MODEL_NAME} on device: {worker_settings.FINAL_STT_DEVICE} with compute_type: {worker_settings.STT_COMPUTE_TYPE}")
+        try:
+            # Ensure language is set, default to 'en' if not specified or invalid
+            stt_language = worker_settings.STT_LANGUAGE if worker_settings.STT_LANGUAGE else "en"
+            if len(stt_language) > 2 : # whisperx might expect 2-letter codes for language
+                self.logger.warning(f"STT_LANGUAGE '{stt_language}' might be invalid for whisperX, attempting to use its first two letters or defaulting to 'en'.")
+                stt_language_code = stt_language[:2].lower()
+                # Basic check, whisperx has its own validation.
+                if stt_language_code not in ["en", "fr", "es", "de", "it", "ja", "ko", "nl", "pt", "ru", "zh", "ar", "cs", "da", "el", "fi", "he", "hi", "hu", "id", "ms", "no", "pl", "ro", "sk", "sv", "th", "tr", "uk", "vi"]: # Common codes
+                     self.logger.warning(f"Derived language code '{stt_language_code}' not in common list, WhisperX might default or error. Original: {stt_language}")
+                stt_language = stt_language_code
+
             self.stt_model = WhisperModel(
                 worker_settings.STT_MODEL_NAME,
                 device=worker_settings.FINAL_STT_DEVICE,
                 compute_type=worker_settings.STT_COMPUTE_TYPE
             )
-            self.logger.info("faster-whisper STT model loaded successfully.")
+
+            # self.stt_model = whisperx.load_model(
+            #     worker_settings.STT_MODEL_NAME,
+            #     device=worker_settings.FINAL_STT_DEVICE,
+            #     compute_type=worker_settings.STT_COMPUTE_TYPE,
+            #     language=stt_language if stt_language else None, # Pass None if empty to let whisperx use its default multi-language detection.
+            #     # asap_options={"model_path": "some_path"} # For custom ASR alignment model path if needed
+            #     # hf_token = "YOUR_HF_TOKEN" # If models are gated on Hugging Face
+            # )
+            self.stt_batch_size = getattr(worker_settings, 'STT_BATCH_SIZE', 16) # From example or config
+            self.logger.info(f"WhisperX STT model loaded successfully. Language: {stt_language if stt_language else 'auto-detect'}. Batch size: {self.stt_batch_size}.")
         except Exception as e:
-            self.logger.error(f"Failed to load faster-whisper STT model: {e}", exc_info=True)
-            raise RuntimeError(f"Failed to load faster-whisper STT model: {e}")
+            self.logger.error(f"Failed to load WhisperX STT model: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to load WhisperX STT model: {e}")
+
+        # Audio processing parameters & buffers
+        self.frame_duration_ms = (VAD_WINDOW_SIZE_SAMPLES / self.target_sample_rate) * 1000.0
+        if self.frame_duration_ms <= 0:
+            self.logger.warning("Frame duration is zero or negative, pre-roll calculation might be affected.")
+            self.num_pre_roll_frames = 0
+        else:
+            self.num_pre_roll_frames = int(PRE_ROLL_MS // self.frame_duration_ms)
         
-        self.last_stt_processed_sample_idx = 0
-        self.last_partial_yield_time = 0
-        self.current_transcript_words = []
-        
-        self.logger.info("AudioProcessor initialized for raw PCM processing.")
+        self.logger.info(f"VAD window: {VAD_WINDOW_SIZE_SAMPLES} samples (~{self.frame_duration_ms:.2f}ms). Pre-roll: {PRE_ROLL_MS}ms ({self.num_pre_roll_frames} frames).")
+
+        self.min_samples_for_proper_start = int(MIN_DURATION_FOR_PROPER_START_S * self.target_sample_rate)
+
+        # Buffers
+        self.vad_processing_buffer = np.array([], dtype=np.float32) # Accumulates audio for VAD windowing
+        self.ring_buffer = deque(maxlen=self.num_pre_roll_frames) # Stores recent non-speech chunks for pre-roll
+        self.utterance_audio_buffer_float32 = np.array([], dtype=np.float32) # Accumulates current utterance including pre-roll
+
+        # State flags
+        self.is_speech_triggered = False
+        self.proper_start_sent = False # Tracks if "proper_speech_start" has been sent for the current utterance
+
+        self.logger.info("AudioProcessor initialized with whisperx & VADIterator.")
 
     def close(self):
-        self.logger.info("AudioProcessor.close() called. Buffers will be cleared on next processing if any.")
-        # Resetting buffers or STT context might be done here if needed for explicit cleanup
-        # For now, main buffer clearing is handled by _reset_stt_context and general trimming
-        # No complex process or threads to shut down.
-        self.audio_buffer = np.array([], dtype=np.float32)
-        self.last_stt_processed_sample_idx = 0
-        self.current_transcript_words = []
+        self.logger.info("AudioProcessor.close() called. Resetting internal state.")
+        self.vad_processing_buffer = np.array([], dtype=np.float32)
+        self.ring_buffer.clear()
+        self.utterance_audio_buffer_float32 = np.array([], dtype=np.float32)
+        self.is_speech_triggered = False
+        self.proper_start_sent = False
+        # self.vad_iterator.reset_states() # If VADIterator has a reset method
         self.logger.info("AudioProcessor internal state reset on close.")
 
-    def _load_vad_model(self):
-        """Loads the Silero VAD model from torch.hub."""
+    def _load_vad_model(self) -> Tuple[Optional[Any], Optional[Any]]:
+        """Loads the Silero VAD model and its VADIterator utility class from torch.hub."""
         try:
-            # Silero VAD is loaded via torch.hub
-            # FR-02 specifies silero-vad version 0.4. The torch.hub call usually gets the latest from the repo.
-            # To pin to a specific version/commit, a more specific hubconf.py or commit hash might be needed.
-            # For now, using the standard way which gets the repo's default.
             model, utils = torch.hub.load(
-                repo_or_dir=worker_settings.VAD_MODEL_REPO, 
-                model=worker_settings.VAD_MODEL_NAME, 
-                force_reload=False, # Set to True to always re-download, False to use cache
-                onnx=worker_settings.VAD_ONNX # Use ONNX setting from config
+                repo_or_dir=worker_settings.VAD_MODEL_REPO,
+                model=worker_settings.VAD_MODEL_NAME,
+                force_reload=False,
+                onnx=worker_settings.VAD_ONNX,
+                trust_repo=True # Added as per example pattern
             )
-            # Return the model and the entire utils object
-            return model, utils
+            # The example pattern suggests VADIterator is one of the items in the utils tuple.
+            # (get_speech_timestamps, save_audio, read_audio, VADIterator_class, collect_chunks) = utils
+            # We need to locate VADIterator within 'utils'. This depends on silero-vad's current hubconf.py
+            # For simplicity, let's assume utils itself is the tuple and VADIterator is the 4th element
+            # This might need adjustment based on the actual structure of 'utils' from the 'snakers4/silero-vad' repo.
+            
+            # A more robust way to get VADIterator from the utils tuple:
+            VADIterator_class = None
+            if isinstance(utils, tuple):
+                for item in utils:
+                    if callable(item) and hasattr(item, '__name__') and item.__name__ == 'VADIterator':
+                        VADIterator_class = item
+                        break
+            
+            if VADIterator_class is None:
+                # Fallback: Check if utils *is* VADIterator (less likely) or directly has it as an attribute
+                if callable(utils) and hasattr(utils, '__name__') and utils.__name__ == 'VADIterator':
+                     VADIterator_class = utils
+                elif hasattr(utils, 'VADIterator'):
+                    VADIterator_class = utils.VADIterator
+
+            if VADIterator_class is None:
+                self.logger.error("VADIterator class not found in Silero VAD utilities.")
+                return model, None # Return model, but indicate VADIterator part failed
+
+            # Return the model and the VADIterator *class* (or the whole utils if VADIterator needs it)
+            # The __init__ will instantiate it.
+            # The example `vad_iterator = VADIterator(model_vad)` implies VADIterator is a class.
+            return model, VADIterator_class # Return the class to be instantiated
         except Exception as e:
-            self.logger.error(f"Error loading Silero VAD model: {e}", exc_info=True)
+            self.logger.error(f"Error loading Silero VAD model or VADIterator class: {e}", exc_info=True)
             return None, None
 
     def _convert_pcm_s16le_to_float32(self, pcm_s16le_bytes: bytes) -> np.ndarray:
@@ -99,7 +212,6 @@ class AudioProcessor:
         if not pcm_s16le_bytes:
             return np.array([], dtype=np.float32)
         
-        # Ensure byte string length is a multiple of 2 (each sample is 2 bytes for int16)
         if len(pcm_s16le_bytes) % 2 != 0:
             self.logger.warning(f"Received PCM S16LE byte string with odd length: {len(pcm_s16le_bytes)}. Truncating last byte.")
             pcm_s16le_bytes = pcm_s16le_bytes[:-1]
@@ -107,9 +219,7 @@ class AudioProcessor:
                 return np.array([], dtype=np.float32)
 
         try:
-            # Interpret bytes as int16 little-endian
             pcm_int16 = np.frombuffer(pcm_s16le_bytes, dtype=np.int16)
-            # Convert to float32 and normalize to [-1.0, 1.0]
             pcm_float32 = pcm_int16.astype(np.float32) / 32768.0 
             return pcm_float32
         except Exception as e:
@@ -121,7 +231,7 @@ class AudioProcessor:
         if original_sr == target_sr:
             return audio_data
         
-        self.logger.warning(f"Resampling audio from {original_sr}Hz to {target_sr}Hz. This should ideally be handled by the client.")
+        self.logger.warning(f"Resampling audio from {original_sr}Hz to {target_sr}Hz. Client should ideally send at {target_sr}Hz.")
         if original_sr <= 0:
             self.logger.error(f"Invalid original_sr ({original_sr}) for resampling. Skipping resampling.")
             return audio_data
@@ -136,216 +246,142 @@ class AudioProcessor:
             self.logger.error(f"Error during resampling from {original_sr}Hz to {target_sr}Hz: {e}", exc_info=True)
             return audio_data
 
-    def _reset_stt_context(self, last_processed_end_sample: int | None = None):
-        """Resets context for the current utterance being transcribed."""
-        # self.logger.debug(f"Resetting STT context. Last processed end sample for potential trim: {last_processed_end_sample}")
-        self.current_transcript_words = []
-        self.last_partial_yield_time = 0
-        
-        if last_processed_end_sample is not None:
-            # self.logger.debug(f"Updating last_stt_processed_sample_idx from {self.last_stt_processed_sample_idx} to {last_processed_end_sample}")
-            self.last_stt_processed_sample_idx = last_processed_end_sample
-            
-            # Aggressively trim the buffer after a final utterance, keeping only a prefix for the next one.
-            # The prefix should be *before* where new speech might start relative to the *new* buffer.
-            # If last_stt_processed_sample_idx is now the end of the utterance in the *old* buffer state:
-            prefix_samples = int(AUDIO_BUFFER_PREFIX_S * self.target_sample_rate)
-            
-            # We want to effectively discard up to self.last_stt_processed_sample_idx,
-            # but ensure the part of the buffer we keep, if any, has its `last_stt_processed_sample_idx` correctly relative to its new start.
-            # If we trim up to `trim_from = self.last_stt_processed_sample_idx`
-            # The new buffer would be `self.audio_buffer[trim_from:]`
-            # And the new `last_stt_processed_sample_idx` should be 0 relative to this new buffer.
-
-            # More simply: After an utterance is final, the next utterance starts fresh from STT perspective.
-            # The audio buffer should be trimmed to remove most of the processed utterance, only keeping tail for context.
-            
-            # Cut point in the current buffer: effectively the end of the finalized utterance.
-            cut_point = self.last_stt_processed_sample_idx 
-
-            # Determine how much of the tail (prefix for next utterance) to keep from *before* this cut_point.
-            context_to_keep_from_before_cut = self.audio_buffer[max(0, cut_point - prefix_samples) : cut_point]
-            remaining_audio_after_cut = self.audio_buffer[cut_point:]
-            
-            self.audio_buffer = np.concatenate((context_to_keep_from_before_cut, remaining_audio_after_cut))
-            # After this, last_stt_processed_sample_idx should be relative to the new buffer start.
-            # The 'processed' part is now the 'context_to_keep_from_before_cut'.
-            self.last_stt_processed_sample_idx = len(context_to_keep_from_before_cut)
-            # self.logger.debug(f"Buffer aggressively trimmed. New size: {len(self.audio_buffer)}. New last_stt_idx: {self.last_stt_processed_sample_idx}")
-        else:
-            # This case is for resets not tied to a final utterance end (e.g. initial state, error)
-            # Standard buffer trimming will apply later in process_audio_chunk
-            pass
-
-    def process_audio_chunk(self, raw_pcm_s16le_bytes: bytes) -> Iterator[Tuple[str, bool, float]]:
-        # This method now takes raw PCM s16le bytes (FR-01 conformity)
-        
-        # 1. Convert raw PCM S16LE bytes to float32 NumPy array
+    def process_audio_chunk(self, raw_pcm_s16le_bytes: bytes) -> Iterator[Dict[str, Any]]:
         decoded_audio_np = self._convert_pcm_s16le_to_float32(raw_pcm_s16le_bytes)
 
         if decoded_audio_np.size == 0:
             # self.logger.debug("Empty audio chunk after PCM conversion.")
-            yield from []
-            return
-        
-        # At this point, decoded_audio_np should be 16kHz float32 mono as per frontend's PCMProcessor
-        # If there was a mismatch, _resample_audio could be called here, but we assume client conformity.
-        # Example: if client_sample_rate != self.target_sample_rate:
-        #    decoded_audio_np = self._resample_audio(decoded_audio_np, client_sample_rate, self.target_sample_rate)
-
-        # --- Start of VAD/STT processing logic (largely unchanged from before) ---
-        self.audio_buffer = np.concatenate((self.audio_buffer, decoded_audio_np))
-        # self.logger.debug(f"Appended {len(decoded_audio_np)} decoded samples to buffer. Buffer size: {len(self.audio_buffer)}")
-
-        min_buffer_samples_for_vad = int(MIN_AUDIO_BUFFER_S_BEFORE_VAD * self.target_sample_rate)
-        if len(self.audio_buffer) < min_buffer_samples_for_vad: 
-            yield from []
             return
 
-        try:
-            contiguous_audio_buffer = np.ascontiguousarray(self.audio_buffer)
-            audio_tensor = torch.from_numpy(contiguous_audio_buffer)
-            if not hasattr(self, 'get_speech_timestamps') or not self.vad_model:
-                 self.logger.error("VAD model/utils not loaded properly. Cannot perform VAD.")
-                 yield from []
-                 return
-            speech_timestamps: List[Dict[str, int]] = self.get_speech_timestamps(
-                audio_tensor, 
-                self.vad_model, 
-                sampling_rate=self.target_sample_rate, # Assumes audio_buffer is at target_sample_rate
-                threshold=worker_settings.VAD_THRESHOLD,
-                min_silence_duration_ms=worker_settings.VAD_MIN_SILENCE_DURATION_MS,
-                speech_pad_ms=worker_settings.VAD_SPEECH_PAD_MS
-            )
-        except Exception as e:
-            self.logger.error(f"Error during VAD processing: {e}", exc_info=True)
-            yield from []
-            return
+        # Assuming client sends at target_sample_rate, or _resample_audio would be called here.
+        # For simplicity, not adding resampling in this loop, relying on __init__ check or upstream handling.
 
-        if not speech_timestamps:
-            # MODIFIED: Removed immediate finalization of self.current_transcript_words here.
-            # Finalization should be handled by the main STT loop when VAD segments are processed
-            # or by a more robust end-of-speech timeout mechanism if speech truly ends with silence.
-            # if self.current_transcript_words:
-            #     final_text = " ".join(w["word"].strip() for w in self.current_transcript_words if w["word"].strip())
-            #     final_text = " ".join(final_text.split()).strip()
-            #     yield (final_text, True, time.time() * 1000)
-            #     self._reset_stt_context(len(self.audio_buffer) -1) # Use end of current buffer for reset
-            
-            # Trim buffer if no speech detected for a while to prevent excessive growth (existing logic)
-            prefix_samples = int(AUDIO_BUFFER_PREFIX_S * self.target_sample_rate)
-            if len(self.audio_buffer) > prefix_samples * 2: # Keep a bit more than just prefix if silent
-                 self.audio_buffer = self.audio_buffer[-prefix_samples:]
-                 self.last_stt_processed_sample_idx = min(self.last_stt_processed_sample_idx, len(self.audio_buffer))
-            yield from [] # Yield nothing if no VAD activity and we are not finalizing here.
-            return
+        self.vad_processing_buffer = np.concatenate((self.vad_processing_buffer, decoded_audio_np))
 
-        buffer_processed_up_to_sample = 0
-        any_transcript_yielded_this_call = False
-
-        for i, segment_ts in enumerate(speech_timestamps):
-            start_sample = segment_ts['start']
-            end_sample = segment_ts['end']
-
-            if start_sample < self.last_stt_processed_sample_idx - self.target_sample_rate * 0.1:
-                buffer_processed_up_to_sample = max(buffer_processed_up_to_sample, end_sample)
-                continue
-                
-            segment_audio = self.audio_buffer[start_sample:end_sample]
-            segment_duration_s = len(segment_audio) / self.target_sample_rate
-
-            if segment_duration_s < MIN_STT_AUDIO_S:
-                buffer_processed_up_to_sample = max(buffer_processed_up_to_sample, end_sample)
-                continue 
+        while len(self.vad_processing_buffer) >= VAD_WINDOW_SIZE_SAMPLES:
+            current_vad_chunk = self.vad_processing_buffer[:VAD_WINDOW_SIZE_SAMPLES]
+            self.vad_processing_buffer = self.vad_processing_buffer[VAD_WINDOW_SIZE_SAMPLES:]
 
             try:
-                whisper_segments, info = self.stt_model.transcribe(
-                    segment_audio, 
-                    beam_size=worker_settings.STT_BEAM_SIZE,
-                    language=worker_settings.STT_LANGUAGE,
-                    word_timestamps=True,
-                )
-                is_last_vad_segment_in_buffer = (i == len(speech_timestamps) - 1)
-                # Adjust end condition: consider final if VAD segment ends near the current end of the audio_buffer
-                # This is more robust than just checking if it's the last VAD segment from the *current VAD run*
-                # as more audio might have arrived since VAD ran.
-                # For simplicity here, using the previous logic:
-                # Increased from 0.5s to 1.0s to be less aggressive with finalization
-                ends_near_buffer_end = (len(self.audio_buffer) - end_sample) < (self.target_sample_rate * 1.0)                 
-                
-                for word_segment in whisper_segments: 
-                    # self.logger.info(f"STT segment: {word_segment}") # Can be very verbose
-                    if not word_segment.words: # Handle cases where Whisper gives text but no word timestamps
-                        if word_segment.text.strip(): 
-                            self.current_transcript_words.append({"word": word_segment.text.strip(), "start": word_segment.start, "end": word_segment.end})
-                    else:
-                        for word_info in word_segment.words:
-                            self.current_transcript_words.append({"word": word_info.word, "start": word_info.start, "end": word_info.end})
-                        
-                    # Yield partial transcript based on accumulated words if conditions met
-                    now = time.time()
-                    # Condition: interval passed OR new word is reasonably long (suggests meaningful change)
-                    if self.current_transcript_words and ((now - self.last_partial_yield_time) * 1000 >= worker_settings.STT_PARTIAL_TRANSCRIPT_INTERVAL_MS or \
-                       (self.current_transcript_words[-1]["word"].strip() and len(self.current_transcript_words[-1]["word"].strip()) > 2)):
-                        current_words_for_partial = [w["word"].strip() for w in self.current_transcript_words if w["word"].strip()]
-                        partial_text = " ".join(current_words_for_partial)
-                        partial_text = " ".join(partial_text.split()).strip() # Normalize spaces
-                        if partial_text: # Only yield if there's actual text
-                            # self.logger.debug(f"Yielding partial transcript: {partial_text}")
-                            yield (partial_text, False, now * 1000)
-                            self.last_partial_yield_time = now
-                            any_transcript_yielded_this_call = True
-                
-                utterance_is_final = is_last_vad_segment_in_buffer and ends_near_buffer_end
-
-                if self.current_transcript_words and utterance_is_final: 
-                    final_text_segment = " ".join(w["word"].strip() for w in self.current_transcript_words if w["word"].strip())
-                    final_text_for_segment_or_utterance = " ".join(final_text_segment.split()).strip() # Normalize spaces
-
-                    # self.logger.info(f"AUDIO_PROCESSOR: PREPARING TO YIELD transcript='{final_text_for_segment_or_utterance}', final={utterance_is_final}")
-                    if final_text_for_segment_or_utterance: # Only yield if there's text
-                        yield (final_text_for_segment_or_utterance, True, time.time() * 1000) # True for final
-                        any_transcript_yielded_this_call = True
-                        self._reset_stt_context(end_sample) # Pass end_sample of the final VAD segment
-                
-                buffer_processed_up_to_sample = max(buffer_processed_up_to_sample, end_sample)
-
+                # VADIterator processes chunk by chunk and maintains its own state.
+                # It expects audio chunks of fixed size (e.g., 30ms for 16kHz -> 480 samples, 32ms -> 512 samples)
+                # The output 'speech_dict' contains 'start' or 'end' keys if speech segment boundaries are detected.
+                speech_dict = self.vad_iterator(current_vad_chunk, return_seconds=False) # Pass return_seconds=False as per example
             except Exception as e:
-                self.logger.error(f"Error during STT processing for a segment: {e}", exc_info=True)
-                # Yield an error marker, consider it final for this attempt
-                yield ("[STT Processing Error]", True, time.time() * 1000) 
-                any_transcript_yielded_this_call = True
-                self._reset_stt_context() 
-                buffer_processed_up_to_sample = max(buffer_processed_up_to_sample, end_sample) # Still advance buffer
-        
-        # General buffer trimming logic (from before, ensure it's still valid)
-        if not (any_transcript_yielded_this_call and not self.current_transcript_words): # If a final transcript was yielded, current_transcript_words would be empty
-            prefix_samples = int(AUDIO_BUFFER_PREFIX_S * self.target_sample_rate)
-            effective_trim_start = max(0, buffer_processed_up_to_sample - prefix_samples)
+                self.logger.error(f"Error during VADIterator processing: {e}", exc_info=True)
+                yield {"event_type": "error", "message": "VAD processing error", "details": str(e), "timestamp_ms": time.time() * 1000}
+                # Potentially reset VAD state if possible: self.vad_iterator.reset_states()
+                continue # Skip to next chunk processing attempt
+
+
+            is_speech_start = speech_dict is not None and 'start' in speech_dict
+            is_speech_end = speech_dict is not None and 'end' in speech_dict
             
-            if effective_trim_start > 0 and effective_trim_start < len(self.audio_buffer):
-                self.audio_buffer = self.audio_buffer[effective_trim_start:]
-                self.last_stt_processed_sample_idx = max(0, self.last_stt_processed_sample_idx - effective_trim_start)
-            elif buffer_processed_up_to_sample >= len(self.audio_buffer) - 10: # If almost entire buffer was processed
-                 self.audio_buffer = self.audio_buffer[max(0, len(self.audio_buffer) - prefix_samples):] # Keep only prefix
-                 self.last_stt_processed_sample_idx = min(len(self.audio_buffer), prefix_samples) 
-            elif not speech_timestamps and len(self.audio_buffer) > self.target_sample_rate * 10: # Trim long silent buffer
-                self.audio_buffer = self.audio_buffer[-prefix_samples:]
-                self.last_stt_processed_sample_idx = len(self.audio_buffer)
+            # Handling VAD events and managing utterance buffer
+            if is_speech_start and not self.is_speech_triggered:
+                self.logger.debug(f"VAD start detected at sample (relative to chunk): {speech_dict['start'] if speech_dict else 'N/A'}")
+                self.is_speech_triggered = True
+                self.proper_start_sent = False # Reset for new utterance
+                
+                # Prepend audio from ring_buffer to utterance_audio_buffer
+                if self.ring_buffer:
+                    # self.logger.debug(f"Prepending {len(self.ring_buffer)} pre-roll chunks.")
+                    pre_roll_audio_list = list(self.ring_buffer)
+                    if pre_roll_audio_list: # Ensure not empty after conversion
+                        full_pre_roll_audio = np.concatenate(pre_roll_audio_list)
+                        self.utterance_audio_buffer_float32 = np.concatenate((full_pre_roll_audio, self.utterance_audio_buffer_float32))
+                    self.ring_buffer.clear()
+            
+            if self.is_speech_triggered:
+                # Append current VAD chunk to the utterance buffer
+                # Note: VAD 'start' might be *within* current_vad_chunk.
+                # For simplicity, we append the whole chunk when triggered.
+                # More precise would be to use speech_dict['start'] offset if it refers to current_vad_chunk.
+                # However, silero-vad's VADIterator typically signals start *after* enough speech is in its internal buffer.
+                self.utterance_audio_buffer_float32 = np.concatenate((self.utterance_audio_buffer_float32, current_vad_chunk))
+                self.logger.info("Barge-in start detected.")
+                yield {"event_type": "vad_event", "status": "barge_in_start", "timestamp_ms": time.time() * 1000}
+                # Check for "proper speech start"
+                if len(self.utterance_audio_buffer_float32) >= self.min_samples_for_proper_start and not self.proper_start_sent:
+                    self.logger.info("Proper speech start detected.")
+                    yield {"event_type": "vad_event", "status": "proper_speech_start", "timestamp_ms": time.time() * 1000}
+                    self.proper_start_sent = True
+            else: # Not triggered (i.e., silence or before speech starts)
+                self.ring_buffer.append(current_vad_chunk)
+
+            if is_speech_end and self.is_speech_triggered:
+                self.logger.debug(f"VAD end detected at sample (relative to chunk): {speech_dict['end'] if speech_dict else 'N/A'}")
+                self.is_speech_triggered = False # Speech has ended for now
+
+                # Process the accumulated utterance
+                if len(self.utterance_audio_buffer_float32) >= self.min_samples_for_proper_start: # Using min_samples_for_proper_start as STT min length
+                    self.logger.info(f"Attempting to transcribe utterance of {len(self.utterance_audio_buffer_float32)/self.target_sample_rate:.2f}s.")
+                    try:
+                        # WhisperX transcribe expects audio as float32 numpy array
+                        # Align audio first if word timestamps are crucial and an alignment model is available/configured
+                        # result = self.stt_model.align(audio_float32, result, device=self.stt_device)
+                        
+                        # Direct transcription
+                        # Ensure utterance_audio_buffer_float32 is C-contiguous if whisperX requires
+                        audio_to_transcribe = np.ascontiguousarray(self.utterance_audio_buffer_float32)
+                        
+                       #transcription_result = self.stt_model.transcribe(
+                       #     audio_to_transcribe,
+                       #     batch_size=self.stt_batch_size
+                       #     # chunk_size = for long audio, but here utterance should be relatively short
+                       # )
+                        transcription_result, info = self.stt_model.transcribe(
+                            audio_to_transcribe,
+                            beam_size=self.stt_batch_size,
+                            language=worker_settings.STT_LANGUAGE,
+                            word_timestamps=True,
+
+                            # chunk_size = for long audio, but here utterance should be relatively short
+                        )
+                        
+                        #full_text = "".join(segment["text"] for segment in transcription_result.get("segments", [])).strip()
+                        full_text = ""
+                        current_transcript_words = []
+                        for word_segment in transcription_result: 
+                            # self.logger.info(f"STT segment: {word_segment}") # Can be very verbose
+                            if not word_segment.words: # Handle cases where Whisper gives text but no word timestamps
+                                if word_segment.text.strip(): 
+                                    current_transcript_words.append({"word": word_segment.text.strip(), "start": word_segment.start, "end": word_segment.end})
+                            else:
+                                for word_info in word_segment.words:
+                                    current_transcript_words.append({"word": word_info.word, "start": word_info.start, "end": word_info.end})
+                        full_text = " ".join([word["word"] for word in current_transcript_words])
+
+
+
+                        if full_text:
+                            self.logger.info(f"Transcription result: '{full_text}'")
+                            yield {
+                                "event_type": "transcript", 
+                                "transcript": full_text, 
+                                "is_final": True, 
+                                "timestamp_ms": time.time() * 1000,
+                            }
+                        else:
+                            self.logger.info("Transcription resulted in empty text.")
+                            # Optionally yield a specific event for empty transcription if needed
+                            # yield {"event_type": "vad_event", "status": "empty_transcription", "timestamp_ms": time.time() * 1000}
+
+
+                    except Exception as e:
+                        self.logger.error(f"Error during WhisperX STT processing: {e}", exc_info=True)
+                        yield {"event_type": "error", "message": "STT processing error", "details": str(e), "timestamp_ms": time.time() * 1000}
+                else:
+                    self.logger.info(f"Speech false detection: Utterance too short ({len(self.utterance_audio_buffer_float32)/self.target_sample_rate:.2f}s).")
+                    yield {"event_type": "vad_event", "status": "speech_false_detection", "timestamp_ms": time.time() * 1000}
+                
+                # Reset for next utterance
+                self.utterance_audio_buffer_float32 = np.array([], dtype=np.float32)
+                self.proper_start_sent = False
+                # self.vad_iterator.reset_states() # Reset VAD iterator state after speech end
+                # Ring buffer is naturally managed by its maxlen and usage on next speech start.
         
-        if not any_transcript_yielded_this_call and self.current_transcript_words:
-            # This case can happen if speech is detected, words are accumulated,
-            # but no partial/final condition was met within this specific call to process_audio_chunk.
-            # We don't necessarily need to yield here unless a timeout or other logic forces it.
-            # The words remain in self.current_transcript_words for the next chunk.
-            pass
-
-        # Ensure that if nothing was yielded but there were words, they are not lost if no more audio comes
-        # This might be better handled by a timeout mechanism in the main worker loop for finalization.
-        # For now, if no transcript yielded and we have words, they stay for next round.
-
-        if not any_transcript_yielded_this_call:
-             yield from []
+        # If vad_processing_buffer has remaining audio less than VAD_WINDOW_SIZE_SAMPLES, it stays for the next call.
 
 # Example Usage (for testing this file directly, not part of worker main loop)
 # if __name__ == '__main__':

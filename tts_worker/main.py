@@ -216,8 +216,9 @@ async def subscribe_to_tts_requests(redis_client: redis.Redis, synthesizer: Abst
 
 async def subscribe_to_tts_control(redis_client: redis.Redis):
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe(tts_settings.TTS_CONTROL_CHANNEL)
-    logger.info(f"TTS Service subscribed to control channel: {tts_settings.TTS_CONTROL_CHANNEL}")
+
+    await pubsub.subscribe(tts_settings.BARGE_IN_CHANNEL)
+    logger.info(f"TTS Service subscribed to control/barge-in channel: {tts_settings.BARGE_IN_CHANNEL}")
     global running
     while running:
         try:
@@ -226,18 +227,41 @@ async def subscribe_to_tts_control(redis_client: redis.Redis):
                 control_data_str = message["data"].decode('utf-8')
                 try:
                     control_data = json.loads(control_data_str)
-                    if control_data.get("command") == "stop_tts" and "conversation_id" in control_data:
-                        conv_id_to_stop = control_data["conversation_id"]
-                        logger.info(f"TTS Service: Received stop command for conv_id '{conv_id_to_stop}'.")
+                    conv_id_to_stop = control_data.get("conversation_id")
+
+                    # Handle both "stop_tts" command and "barge_in_detected" type
+                    should_stop = False
+                    if control_data.get("command") == "stop_tts" and conv_id_to_stop:
+                        logger.info(f"TTS Service: Received 'stop_tts' command for conv_id '{conv_id_to_stop}'.")
+                        should_stop = True
+                    elif control_data.get("type") == "barge_in_detected" and conv_id_to_stop:
+                        logger.info(f"TTS Service: Received 'barge_in_detected' event for conv_id '{conv_id_to_stop}'.")
+                        should_stop = True
+                    
+                    if should_stop and conv_id_to_stop:
                         if conv_id_to_stop in active_synthesis_tasks:
                             task, stop_event = active_synthesis_tasks[conv_id_to_stop]
-                            stop_event.set()
-                            if not task.done(): task.cancel()
+                            stop_event.set() # Signal the synthesis loop to stop
+                            if not task.done():
+                                task.cancel() # Cancel the task
+                                try:
+                                    await task # Await cancellation to propagate
+                                except asyncio.CancelledError:
+                                    logger.info(f"TTS Service: Synthesis task for conv_id '{conv_id_to_stop}' cancelled due to control/barge-in event.")
+                                except Exception as e_task_await:
+                                    logger.error(f"TTS Service: Error awaiting cancelled task for '{conv_id_to_stop}': {e_task_await}", exc_info=True)
+
+                            # Clean up from active_synthesis_tasks is handled in process_tts_request's finally block
+                            # or can be done here if immediate removal is desired post-cancellation.
+                            # For safety, let the original finally block in process_tts_request handle it.
                             logger.info(f"TTS Service: Signaled stop and cancelled task for conv_id '{conv_id_to_stop}'.")
                         else:
                             logger.info(f"TTS Service: No active synthesis task found to stop for conv_id '{conv_id_to_stop}'.")
+                    elif not conv_id_to_stop and (control_data.get("command") == "stop_tts" or control_data.get("type") == "barge_in_detected"):
+                        logger.warning(f"TTS Service: Received stop/barge-in event without conversation_id: {control_data_str}")
+
                 except json.JSONDecodeError:
-                    logger.error(f"TTS Service: Error decoding TTS control JSON: {control_data_str}", exc_info=True)
+                    logger.error(f"TTS Service: Error decoding TTS control/barge-in JSON: {control_data_str}", exc_info=True)
             elif message is None: await asyncio.sleep(0.01)
         except redis.RedisError as e:
             logger.error(f"TTS Service: Redis error in TTS control subscription loop: {e}", exc_info=True)

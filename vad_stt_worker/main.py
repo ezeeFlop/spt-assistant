@@ -160,14 +160,22 @@ async def process_audio_messages_from_redis(redis_client: redis.Redis):
 
                         if processor:
                             try:
-                                for transcript, is_final, timestamp_ms in processor.process_audio_chunk(audio_chunk_bytes):
-                                    await publish_transcript(redis_client, conversation_id, transcript, is_final, timestamp_ms)
-
+                                for event in processor.process_audio_chunk(audio_chunk_bytes):
+                                    if event["event_type"] == "transcript":
+                                        await publish_transcript(redis_client, conversation_id, event["transcript"], event["is_final"], event["timestamp_ms"])
+                                        if has_signaled_barge_in_for_conv.get(conversation_id, False):
+                                            logger.debug(f"Resetting barge-in signaled flag for conv_id {conversation_id} after final transcript.")
+                                        has_signaled_barge_in_for_conv[conversation_id] = False
+                                        
+                                        # Update last activity time upon final transcript, good signal of active processing
+                                        last_activity_time[conversation_id] = time.time()
                                     # Barge-in Logic:
                                     # If a transcript (even partial) is produced, it means speech is detected.
-                                    if transcript.strip(): # Check if there's actual speech text
+                                    if event["event_type"] == "vad_event" and (event["status"] == "proper_speech_start" or event["status"] == "barge_in_start"): # Check if there's actual speech text
                                         if not has_signaled_barge_in_for_conv.get(conversation_id, False):
+                                            logger.info(f"Barge-in detected for conv_id {conversation_id}.")
                                             tts_is_currently_active = await check_tts_active(conversation_id, redis_client)
+                                            logger.info(f"TTS is currently active for conv_id {conversation_id}: {tts_is_currently_active}")
                                             if tts_is_currently_active:
                                                 barge_in_payload = {
                                                     "type": "barge_in_detected", # Clearer type for the event
@@ -183,14 +191,6 @@ async def process_audio_messages_from_redis(redis_client: redis.Redis):
                                                 except Exception as e_barge_generic:
                                                     logger.error(f"Unexpected error publishing barge-in signal for conv_id {conversation_id}: {e_barge_generic}", exc_info=True)
                                     
-                                    # Reset barge-in signaled flag when a final transcript is published for the utterance
-                                    if is_final:
-                                        if has_signaled_barge_in_for_conv.get(conversation_id, False):
-                                            logger.debug(f"Resetting barge-in signaled flag for conv_id {conversation_id} after final transcript.")
-                                        has_signaled_barge_in_for_conv[conversation_id] = False
-                                        
-                                        # Update last activity time upon final transcript, good signal of active processing
-                                        last_activity_time[conversation_id] = time.time()
 
                             except Exception as e_process_chunk:
                                 logger.error(f"Error processing audio chunk for conv_id {conversation_id}: {e_process_chunk}", exc_info=True)
