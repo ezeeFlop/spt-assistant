@@ -49,10 +49,10 @@ async def set_tts_active_state(conversation_id: str, redis_client: redis.Redis, 
     try:
         if active:
             await redis_client.set(tts_active_key, "1", ex=tts_settings.TTS_ACTIVE_STATE_TTL_SECONDS)
-            logger.debug(f"TTS active state SET for conv_id {conversation_id}")
+            logger.info(f"TTS active state SET for conv_id {conversation_id}")
         else:
             await redis_client.delete(tts_active_key)
-            logger.debug(f"TTS active state CLEARED for conv_id {conversation_id}")
+            logger.info(f"TTS active state CLEARED for conv_id {conversation_id}")
     except redis.RedisError as e:
         logger.error(f"Redis error setting TTS active state for {conversation_id}: {e}", exc_info=True)
 
