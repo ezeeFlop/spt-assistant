@@ -54,5 +54,4 @@ include = [
     "__init__.py", 
 ] 
 
-[tool.uv.scripts]
-// ... existing code ...
+

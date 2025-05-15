@@ -19,9 +19,9 @@ class WorkerSettings(BaseSettings):
     VAD_MODEL_NAME: str = "silero_vad"
     VAD_ONNX: bool = False # Whether to use ONNX version of VAD model
     VAD_SAMPLING_RATE: int = 16000 # Expected sample rate by VAD model (and Whisper)
-    VAD_THRESHOLD: float = 0.5 # Speech probability threshold
-    VAD_MIN_SILENCE_DURATION_MS: int = 1500 # Min silence duration (ms) to break speech segment. Increased from 100ms.
-    VAD_SPEECH_PAD_MS: int = 30 # Pad speech segment (ms)
+    VAD_THRESHOLD: float = 0.7 # Speech probability threshold
+    VAD_MIN_SILENCE_DURATION_MS: int = 2500 # Min silence duration (ms) to break speech segment. Increased from 100ms.
+    VAD_SPEECH_PAD_MS: int = 300 # Pad speech segment (ms)
 
     # STT Settings (faster-whisper)
     # FR-03: faster-whisper with openai/whisper-large-v3 French fine-tune

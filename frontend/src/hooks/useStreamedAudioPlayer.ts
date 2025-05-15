@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 
 // Helper to convert s16le ArrayBuffer to Float32Array
 const pcmS16LEToFloat32 = (arrayBuffer: ArrayBuffer): Float32Array => {

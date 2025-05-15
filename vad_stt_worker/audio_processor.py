@@ -14,10 +14,13 @@ from vad_stt_worker.logging_config import get_logger
 # logger = get_logger(__name__) # Module-level logger, can be used if class logger is not preferred
 
 # Minimum audio length in seconds to feed to STT, helps avoid tiny/noisy segments
-MIN_STT_AUDIO_S = 0.3 
+MIN_STT_AUDIO_S = 0.6 
 # How much audio (in seconds) to keep in the buffer before the start of the last VAD segment.
 # This helps provide left-context to Whisper for better accuracy.
-AUDIO_BUFFER_PREFIX_S = 1.0 
+AUDIO_BUFFER_PREFIX_S = 2 
+# Minimum audio buffer (in seconds) required before running VAD.
+# This helps ensure more of an initial utterance is captured before segmentation.
+MIN_AUDIO_BUFFER_S_BEFORE_VAD = 2
 
 class AudioProcessor:
     def __init__(self):
@@ -194,8 +197,8 @@ class AudioProcessor:
         self.audio_buffer = np.concatenate((self.audio_buffer, decoded_audio_np))
         # self.logger.debug(f"Appended {len(decoded_audio_np)} decoded samples to buffer. Buffer size: {len(self.audio_buffer)}")
 
-        vad_min_samples = int(worker_settings.VAD_MIN_SILENCE_DURATION_MS / 1000 * self.target_sample_rate)
-        if len(self.audio_buffer) < vad_min_samples and len(self.audio_buffer) < self.target_sample_rate * 0.2: 
+        min_buffer_samples_for_vad = int(MIN_AUDIO_BUFFER_S_BEFORE_VAD * self.target_sample_rate)
+        if len(self.audio_buffer) < min_buffer_samples_for_vad: 
             yield from []
             return
 
@@ -267,7 +270,8 @@ class AudioProcessor:
                 # This is more robust than just checking if it's the last VAD segment from the *current VAD run*
                 # as more audio might have arrived since VAD ran.
                 # For simplicity here, using the previous logic:
-                ends_near_buffer_end = (len(self.audio_buffer) - end_sample) < (self.target_sample_rate * 0.5)                 
+                # Increased from 0.5s to 1.0s to be less aggressive with finalization
+                ends_near_buffer_end = (len(self.audio_buffer) - end_sample) < (self.target_sample_rate * 1.0)                 
                 
                 for word_segment in whisper_segments: 
                     # self.logger.info(f"STT segment: {word_segment}") # Can be very verbose

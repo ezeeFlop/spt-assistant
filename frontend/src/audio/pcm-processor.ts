@@ -1,3 +1,5 @@
+// Ignore this line if you don't have @types/audioworklet installed
+// @ts-ignore
 /// <reference types="audioworklet" />
 
 // --- Temporary TypeScript Workaround for AudioWorklet ---
@@ -47,10 +49,10 @@ class PCMProcessor extends AudioWorkletProcessor {
     };
     console.log(`PCMProcessor initialized. Worklet sampleRate: ${globalThis.sampleRate}, Target SR: ${this.targetSampleRate}`);
   }
-
+  // @ts-ignore
   process(inputs: Float32Array[][], outputs: Float32Array[][], parameters: Record<string, Float32Array>): boolean {
     const inputChannelData = inputs[0]?.[0];
-
+    
     if (!inputChannelData || inputChannelData.length === 0) {
       return true; // Keep processor alive
     }

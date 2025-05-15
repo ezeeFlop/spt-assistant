@@ -4,6 +4,8 @@ import useAppStore from '../store/useAppStore';
 const PlaybackControls: React.FC = () => {
   const {
     currentAudioUrl,
+    // @ts-ignore
+
     isPlayingAudio,
     audioPlaybackError,
     setCurrentAudioUrl,

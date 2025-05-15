@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    hostname: redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - voice_assistant_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager] # Or specific worker nodes
+
+  api:
+    image: voice-assistant-api:latest # Replace with your actual image name/tag
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.api
+    hostname: api
+    ports:
+      - "8000:8000"
+    networks:
+      - voice_assistant_net
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # - LOG_LEVEL=INFO # Example, if your app uses this
+    deploy:
+      replicas: 1 # Or more for scalability
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  vad_stt_worker:
+    image: voice-assistant-vad-stt:latest # Replace with your actual image name/tag
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.vad_stt
+    hostname: vad_stt_worker
+    networks:
+      - voice_assistant_net
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # - STT_DEVICE=cpu # Ensure this aligns with your Dockerfile (cpu or cuda)
+      # - LOG_LEVEL=INFO
+    # volumes: # Example if you need to mount .env or models not in image
+      # - ./vad_stt_worker/.env:/app/vad_stt_worker/.env
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  llm_orchestrator_worker:
+    image: voice-assistant-llm-orchestrator:latest # Replace with your actual image name/tag
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.llm_orchestrator
+    hostname: llm_orchestrator_worker
+    networks:
+      - voice_assistant_net
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # - LLM_API_KEY=your_llm_api_key_here # Use Docker secrets for production
+      # - LOG_LEVEL=INFO
+    # volumes:
+      # - ./llm_orchestrator_worker/.env:/app/llm_orchestrator_worker/.env
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  tts_worker:
+    image: voice-assistant-tts:latest # Replace with your actual image name/tag
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.tts
+    hostname: tts_worker
+    networks:
+      - voice_assistant_net
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # - LOG_LEVEL=INFO
+      # - TTS_PROVIDER=piper # if configurable
+      # - PIPER_EXECUTABLE_PATH=/app/tts_worker/piper_tts/piper # if bundled and path needs to be set
+      # - PIPER_VOICES_DIR=/app/tts_worker/piper_tts/voices # if bundled
+    # volumes: # Example for Piper models/executable if not in the image, or for .env
+      # - ./tts_worker/.env:/app/tts_worker/.env
+      # - /path/to/local/piper_executable:/app/tts_worker/piper_tts/piper 
+      # - /path/to/local/piper_voices:/app/tts_worker/piper_tts/voices
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  redis_data:
+
+networks:
+  voice_assistant_net:
+    driver: overlay
+    attachable: true # For easier local debugging if needed 

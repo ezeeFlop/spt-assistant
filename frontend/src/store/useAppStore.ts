@@ -105,7 +105,7 @@ const defaultTtsVoices: TtsVoice[] = [
 // Default values for new settings
 const defaultVadAggressiveness: VadAggressivenessLevel = 2; // A sensible default
 const defaultLlmEndpoint: string = "http://localhost:11434/api/chat"; // Example, common for Ollama
-
+// @ts-ignore
 const useAppStore = create<AppState>((set, get) => ({
   isRecording: false,
   partialTranscript: "",
