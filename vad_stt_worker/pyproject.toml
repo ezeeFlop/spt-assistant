@@ -2,7 +2,7 @@
 name = "vad-stt-worker"
 version = "0.1.0"
 description = "VAD & STT Worker for the Voice Assistant Platform."
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "Christophe Verdier", email = "christophe.verdier@sponge-theory.ai" }]
 dependencies = [
     "redis>=5.0.0", # For Redis pub/sub
     "faster-whisper>=1.0.0", # For STT
@@ -26,6 +26,8 @@ dependencies = [
     "librosa>=0.11.0",
     "soundfile>=0.12.1", # Added for decoding audio
     "ffmpeg-python>=0.2.0", # Added ffmpeg-python
+    # Add whisperx only for Linux
+    "whisperx; sys_platform == 'linux'"
 ]
 requires-python = ">=3.12"
 

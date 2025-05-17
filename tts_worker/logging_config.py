@@ -11,6 +11,7 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
         # Ensure standard library logging is minimally configured
         if not logging.getLogger().hasHandlers():
             handler = logging.StreamHandler(sys.stdout)
+            # TODO: Configure formatter for standard library handler if needed for colors
             logging.basicConfig(handlers=[handler], level=logging.INFO)
 
         structlog.configure(
@@ -21,7 +22,8 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
                 structlog.processors.TimeStamper(fmt="iso"),
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
-                structlog.processors.JSONRenderer(), # Default to JSON for service
+                # structlog.processors.JSONRenderer(), # Default to JSON for service
+                structlog.dev.ConsoleRenderer(),  # For nice, colored console output
             ],
             logger_factory=structlog.stdlib.LoggerFactory(),
             wrapper_class=structlog.stdlib.BoundLogger,

@@ -2,7 +2,7 @@
 name = "llm-orchestrator-worker"
 version = "0.1.0"
 description = "LLM Orchestrator for the Voice Assistant Platform."
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "Christophe Verdier", email = "christophe.verdier@sponge-theory.ai" }]
 dependencies = [
     "redis>=5.0.0",
     "pydantic>=2.7.0",

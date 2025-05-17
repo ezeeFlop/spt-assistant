@@ -9,6 +9,7 @@ class WorkerSettings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None
+    
     AUDIO_STREAM_CHANNEL: str = "audio_stream_channel"    # Channel to receive audio chunks from API gateway
     TRANSCRIPT_CHANNEL: str = "transcript_channel"      # Channel to publish ASR results to
     BARGE_IN_CHANNEL: str = "barge_in_notifications"   # Channel to publish barge-in events to
@@ -32,6 +33,7 @@ class WorkerSettings(BaseSettings):
 
     # This is the field the application code should use. It's determined in __init__.
     # Provide a default that passes initial validation.
+    # detect device from environment or auto-detect if not set.
     FINAL_STT_DEVICE: str = "cpu"
 
     STT_COMPUTE_TYPE: str = "int8" # e.g., float16, int8 for faster-whisper. Adjust based on available hardware and desired trade-off.
@@ -42,8 +44,6 @@ class WorkerSettings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     WORKER_PROCESSOR_INACTIVITY_TIMEOUT_S: int = 120 # Timeout for inactive AudioProcessors
-    BARGE_IN_CHANNEL: str = "barge_in_notifications"
-    TTS_ACTIVE_STATE_PREFIX: str = "tts_active_state:"
 
     model_config = SettingsConfigDict(env_file="vad_stt_worker/.env", env_file_encoding='utf-8', extra="ignore")
 

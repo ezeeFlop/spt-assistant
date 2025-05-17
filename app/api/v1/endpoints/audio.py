@@ -250,6 +250,54 @@ async def forward_tts_audio_to_client(websocket: WebSocket, conversation_id: str
                  logger.error(f"Forward_tts_audio: Error during pubsub cleanup for conv_id {conversation_id}: {e_cleanup}", exc_info=True)
         logger.info(f"forward_tts_audio_to_client: Stopped for conv_id {conversation_id}")
 
+async def forward_barge_in_notifications_to_client(websocket: WebSocket, conversation_id: str):
+    """Subscribes to Redis barge-in channel and forwards notifications to client if conversation_id matches."""
+    pubsub_client: Any = None
+    try:
+        r_client = await redis_service.get_redis_client()
+        pubsub_client = r_client.pubsub()
+        await pubsub_client.subscribe(settings.BARGE_IN_CHANNEL)
+        logger.info(f"Gateway subscribed to {settings.BARGE_IN_CHANNEL} for barge-in events for conv_id {conversation_id}")
+
+        while True:
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.warning(f"Forward_barge_in: WS no longer connected for conv_id {conversation_id}.")
+                break
+            
+            message = await pubsub_client.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            if message and message["type"] == "message":
+                payload_str = message["data"].decode('utf-8')
+                logger.debug(f"Gateway received barge-in payload from Redis: {payload_str} for conv_id {conversation_id}")
+                try:
+                    payload_json = json.loads(payload_str)
+                    if payload_json.get("conversation_id") == conversation_id:
+                        # Forward a specific message type for barge-in
+                        barge_in_message = {
+                            "type": "barge_in_notification",
+                            "conversation_id": conversation_id,
+                            "timestamp_ms": payload_json.get("timestamp_ms") # Forward original timestamp
+                        }
+                        await websocket.send_json(barge_in_message)
+                        logger.info(f"Gateway forwarded barge_in_notification to client for conv_id {conversation_id}")
+                    # else: No need to log ignored messages for other conversations, handled by Redis distribution
+                except json.JSONDecodeError as e:
+                    logger.error(f"Gateway: Error decoding barge-in JSON from Redis: {e} - Data: {payload_str} for conv_id {conversation_id}")
+                except Exception as e:
+                    logger.error(f"Gateway: Error processing/forwarding barge-in for conv_id {conversation_id}: {e}", exc_info=True)
+                    # Potentially break or continue based on error severity
+            elif message is None:
+                await asyncio.sleep(0.01)
+    except Exception as e:
+        logger.error(f"Forward_barge_in: Unexpected error for conv_id {conversation_id}: {e}", exc_info=True)
+    finally:
+        if pubsub_client:
+            try:
+                await pubsub_client.unsubscribe(settings.BARGE_IN_CHANNEL)
+                await pubsub_client.close()
+            except Exception as e_cleanup:
+                logger.error(f"Forward_barge_in: Error during pubsub cleanup for conv_id {conversation_id}: {e_cleanup}", exc_info=True)
+        logger.info(f"forward_barge_in_notifications_to_client: Stopped for conv_id {conversation_id}")
+
 @router.websocket("/ws/audio")
 async def websocket_audio_endpoint(websocket: WebSocket):
     user_identifier = "anonymous_websocket_user" 
@@ -336,6 +384,9 @@ async def websocket_audio_endpoint(websocket: WebSocket):
         
         tts_audio_task = asyncio.create_task(forward_tts_audio_to_client(websocket, conversation_id))
         all_managed_tasks.append(tts_audio_task)
+        
+        barge_in_task = asyncio.create_task(forward_barge_in_notifications_to_client(websocket, conversation_id))
+        all_managed_tasks.append(barge_in_task)
         
         logger.info(f"Gateway: All ({len(all_managed_tasks)}) listener tasks created for conv_id {conversation_id}.")
         done, pending = await asyncio.wait(all_managed_tasks, return_when=asyncio.FIRST_COMPLETED)

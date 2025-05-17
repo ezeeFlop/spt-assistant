@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 import os
 
 from app.api.v1.endpoints import audio
@@ -11,6 +11,9 @@ from app.middleware.cors import add_cors_middleware
 from app.middleware.error_handler import add_error_handling_middleware
 from app.middleware.logging import add_request_logging_middleware
 from app.services.redis_service import startup_redis_client, shutdown_redis_client
+
+import logging
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,22 +41,73 @@ async def health_check():
     """Check the health of the service."""
     return {"status": "ok"}
 
+FRONTEND_DIR = "/app/frontend"
+STATIC_ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
+INDEX_HTML_PATH = os.path.join(FRONTEND_DIR, "index.html")
+
+if os.path.exists(FRONTEND_DIR) and os.path.isdir(FRONTEND_DIR):
+        # Mount static assets (JS, CSS, images etc.) under /static_assets
+        if os.path.exists(STATIC_ASSETS_DIR) and os.path.isdir(STATIC_ASSETS_DIR):
+            app.mount("/assets", StaticFiles(directory=STATIC_ASSETS_DIR), name="static_assets")
+            logger.info(f"Serving static assets from {STATIC_ASSETS_DIR}")
+        else:
+            logger.warning(f"Static assets directory not found: {STATIC_ASSETS_DIR}. Assets might not load correctly.")
+            
+        # Generate config.js file
+        config_js_path = os.path.join(STATIC_ASSETS_DIR, "config.js")
+        try:
+            with open(config_js_path, "w") as f:
+                f.write(f"""window.APP_CONFIG = {{
+    VITE_API_BASE_URL: '{settings.VITE_API_BASE_URL}',
+}};""")
+            logger.info(f"Generated frontend config {config_js_path}")
+        except IOError as e:
+            logger.error(f"Failed to write frontend config {config_js_path}: {e}")
+
+        @app.get("/config.js")
+        async def serve_config_js():
+            return FileResponse(config_js_path)
+
+        # Catch-all route to serve index.html for SPA routing
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_spa(request: Request, full_path: str):
+            if os.path.exists(INDEX_HTML_PATH):
+                return FileResponse(INDEX_HTML_PATH)
+            else:
+                # This case should ideally not happen if FRONTEND_DIR exists,
+                # but good to handle defensively.
+                logger.error(f"index.html not found at {INDEX_HTML_PATH}")
+                # Return a simple 404 or a more informative error page if desired
+                return JSONResponse(
+                    status_code=404,
+                    content={"message": "Frontend entry point not found."},
+                )
+        logger.info(f"Serving SPA entry point from {INDEX_HTML_PATH}")
+    
+else:
+    # Only log a warning if not found, as it might be expected in some dev scenarios
+    logger.warning(f"Static frontend directory not found or not a directory: {FRONTEND_DIR}. Frontend will not be served by FastAPI.")
+# --- End frontend serving section ---
+
+
+
+
 # Serve frontend static files
 # This needs to be mounted after specific API routes
-app.mount("/assets", StaticFiles(directory="app/frontend/assets"), name="frontend-assets")
+#app.mount("/assets", StaticFiles(directory="app/frontend/assets"), name="frontend-assets")
 
-@app.get("/{full_path:path}")
-async def serve_spa_index(request: Request, full_path: str):
-    static_frontend_dir = "frontend"
-    index_html_path = os.path.join(static_frontend_dir, "index.html")
+#   @app.get("/{full_path:path}")
+# async def serve_spa_index(request: Request, full_path: str):
+#     static_frontend_dir = "frontend"
+#     index_html_path = os.path.join(static_frontend_dir, "index.html")
     
-    # Attempt to serve specific files like manifest.json, favicon.ico, etc.
-    potential_file_path = os.path.join(static_frontend_dir, full_path)
-    if os.path.isfile(potential_file_path):
-        return FileResponse(potential_file_path)
+#     # Attempt to serve specific files like manifest.json, favicon.ico, etc.
+#     potential_file_path = os.path.join(static_frontend_dir, full_path)
+#     if os.path.isfile(potential_file_path):
+#         return FileResponse(potential_file_path)
         
-    # For any other path, serve the main index.html (SPA behavior)
-    return FileResponse(index_html_path)
+#     # For any other path, serve the main index.html (SPA behavior)
+#     return FileResponse(index_html_path)
 
 # If you prefer a simpler mount for SPA that handles index.html automatically at root:
 # app.mount("/", StaticFiles(directory="static_frontend", html=True), name="spa")

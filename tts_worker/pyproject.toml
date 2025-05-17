@@ -2,35 +2,23 @@
 name = "tts-worker"
 version = "0.1.0"
 description = "TTS Service for the Voice Assistant Platform using Piper-TTS."
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "Christophe Verdier", email = "christophe.verdier@sponge-theory.ai" }]
 dependencies = [
     "redis>=5.0.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.0.0",
     "structlog>=24.1.0",
     "python-dotenv>=1.0.0",
-    "onnxruntime>=1.15.0", # Needed if piper models are loaded directly in future? Keep for now.
-    # There isn't a single PyPI package called "piper-tts" that installs everything directly.
-    # `piper-tts` is more of a collection of tools/binaries and models.
-    # We will need to download piper executable and voice models separately.
-    # The Python interaction will likely involve calling the piper binary as a subprocess.
-    # For direct Python bindings if available (e.g. piper.tts.PiperTTS), ensure they are added.
-    # For now, we'll assume we will call piper CLI.
-    "numpy>=1.20.0", # For any audio manipulation if necessary
-    "torch>=2.0.0", # Dependency for torchaudio
-    "torchaudio>=2.0.0", # For resampling audio
-    # "piper-tts>=1.2.0" # Removed: Causes dependency hell via piper-phonemize and not strictly needed as we use the piper executable directly.
-    # "soundfile>=0.12.1",    # Alternative for audio I/O, if wave module is insufficient
+    "numpy>=1.20.0", 
+    "torch>=2.0.0", 
+    "torchaudio>=2.0.0",
     "httpx>=0.28.1",
     "elevenlabs>=1.58.1",
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.23.2",
     "async-timeout>=4.0.3",
-    "librosa>=0.10.1", # For audio processing if needed (e.g., resampling, format conversion)
-    "soundfile>=0.12.1", # For reading/writing audio files if needed beyond librosa's capabilities
-    "aiofiles>=23.2.1", # For async file operations, useful for Piper
-    "websockets>=12.0", # For direct WebSocket communication if needed by a provider
-    "pydub>=0.25.1", # For MP3 to PCM conversion
+    "aiofiles>=23.2.1", 
+    "websockets>=12.0", 
 ]
 requires-python = ">=3.12"
 

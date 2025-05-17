@@ -20,7 +20,9 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
                 # structlog.dev.ConsoleRenderer(), # For dev
-                structlog.processors.JSONRenderer(), # For prod, or if preferred
+                # structlog.processors.JSONRenderer(), # For prod, or if preferred
+                structlog.dev.ConsoleRenderer(),  # For nice, colored console output
+
             ],
             logger_factory=structlog.stdlib.LoggerFactory(),
             wrapper_class=structlog.stdlib.BoundLogger,

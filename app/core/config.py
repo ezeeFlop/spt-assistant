@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     LLM_TOKEN_CHANNEL: str = "llm_token_channel"       # Channel LLM Orchestrator publishes stream tokens to
     LLM_TOOL_CALL_CHANNEL: str = "llm_tool_call_channel" # Channel LLM Orchestrator publishes tool calls/status to
     AUDIO_OUTPUT_STREAM_CHANNEL_PATTERN: str = "audio_output_stream:{conversation_id}" # Pattern for TTS audio output
+    BARGE_IN_CHANNEL: str = "barge_in_notifications"  # Channel VAD worker publishes barge-in events to
+    VITE_API_BASE_URL: str = "ws://localhost:8000/v1/ws/audio"
 
     # JWT Settings (FR-Security)
     JWT_SECRET_KEY: str = "your-super-secret-key-please-change-in-production"

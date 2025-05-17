@@ -1,11 +1,7 @@
 import asyncio
 from typing import AsyncIterator, List, Dict, Optional, Any
 from elevenlabs.client import AsyncElevenLabs
-from elevenlabs import Voice, VoiceSettings
-# pydub and io are no longer needed for direct PCM output
-# from pydub import AudioSegment
-# from pydub.utils import mediainfo
-# import io
+from elevenlabs import VoiceSettings
 
 from tts_worker.core.tts_abc import AbstractTTSService
 from tts_worker.logging_config import get_logger

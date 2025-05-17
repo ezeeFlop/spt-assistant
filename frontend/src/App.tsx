@@ -13,8 +13,8 @@ import PlaybackControls from './components/PlaybackControls';
 import SettingsPanel from './components/SettingsPanel';
 
 // TODO: Move to a config file or environment variable
-const WEBSOCKET_URL = 'ws://localhost:8000/v1/ws/audio';
-
+const WEBSOCKET_URL = (window as any).APP_CONFIG?.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL || '/v1/ws/audio';
+console.log('WEBSOCKET_URL', WEBSOCKET_URL);
 function App() {
   const {
     partialTranscript,
@@ -67,7 +67,7 @@ function App() {
         setPartialTranscript(message.text);
         break;
       case 'final_transcript':
-        appendFinalTranscript(message.text);
+        appendFinalTranscript(message.transcript);
         break;
       case 'token':
         appendLlmResponse(message.content);
@@ -114,6 +114,13 @@ function App() {
         if (message.conversation_id === currentConvId) {
             stopAudioPlayback();
             setAudioPlaybackError(message.error); 
+        }
+        break;
+      case 'barge_in_notification':
+        console.log('App: Barge-in notification received:', message);
+        if (message.conversation_id === currentConvId) {
+            stopAudioPlayback();
+            console.log('App: Audio playback stopped due to barge-in notification.');
         }
         break;
       default:

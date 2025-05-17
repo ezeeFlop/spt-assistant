@@ -14,15 +14,14 @@ services:
         constraints: [node.role == manager] # Or specific worker nodes
 
   api:
-    image: voice-assistant-api:latest # Replace with your actual image name/tag
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile.api
+    image: registry.sponge-theory.dev/spt-assistant-api:latest 
+
     hostname: api
     ports:
-      - "8000:8000"
+      - "8301:8301"
     networks:
       - voice_assistant_net
+      - webfacing
     depends_on:
       - redis
     environment:
@@ -36,12 +35,13 @@ services:
         delay: 10s
       restart_policy:
         condition: on-failure
+      placement:
+        constraints:
+          - node.labels.GPU == false
 
   vad_stt_worker:
-    image: voice-assistant-vad-stt:latest # Replace with your actual image name/tag
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile.vad_stt
+    image: registry.sponge-theory.dev/spt-assistant-vad-stt:latest 
+
     hostname: vad_stt_worker
     networks:
       - voice_assistant_net
@@ -61,12 +61,13 @@ services:
         delay: 10s
       restart_policy:
         condition: on-failure
+      placement:
+        constraints:
+          - node.labels.GPU == true
 
   llm_orchestrator_worker:
-    image: voice-assistant-llm-orchestrator:latest # Replace with your actual image name/tag
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile.llm_orchestrator
+    image: registry.sponge-theory.dev/spt-assistant-llm-orchestrator:latest 
+
     hostname: llm_orchestrator_worker
     networks:
       - voice_assistant_net
@@ -86,12 +87,13 @@ services:
         delay: 10s
       restart_policy:
         condition: on-failure
-
+      placement:
+        constraints:
+          - node.labels.GPU == false
+          
   tts_worker:
-    image: voice-assistant-tts:latest # Replace with your actual image name/tag
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile.tts
+    image: registry.sponge-theory.dev/spt-assistant-tts:latest
+
     hostname: tts_worker
     networks:
       - voice_assistant_net
@@ -115,6 +117,9 @@ services:
         delay: 10s
       restart_policy:
         condition: on-failure
+      placement:
+        constraints:
+          - node.labels.GPU == true
 
 volumes:
   redis_data:
@@ -122,4 +127,7 @@ volumes:
 networks:
   voice_assistant_net:
     driver: overlay
-    attachable: true # For easier local debugging if needed 
+    attachable: true
+  webfacing:
+    driver: overlay
+    external: true

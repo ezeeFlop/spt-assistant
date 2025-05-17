@@ -139,6 +139,7 @@ async def process_tts_request(request_data: Dict, synthesizer: AbstractTTSServic
     stop_event = asyncio.Event()
     synthesis_coro = run_synthesis_and_publish(conversation_id, text_to_speak, voice_id, synthesizer, redis_client, output_channel, stop_event, **provider_options)
     task = asyncio.create_task(synthesis_coro)
+    logger.info(f"TTS Service: Created synthesis task for conv_id '{conversation_id}'")
     active_synthesis_tasks[conversation_id] = (task, stop_event)
 
     try:
@@ -223,12 +224,13 @@ async def subscribe_to_tts_control(redis_client: redis.Redis):
     while running:
         try:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            if message and "type" in message:
+                logger.info(f"TTS Service: Received control data: {message}")
             if message and message["type"] == "message":
                 control_data_str = message["data"].decode('utf-8')
                 try:
                     control_data = json.loads(control_data_str)
                     conv_id_to_stop = control_data.get("conversation_id")
-
                     # Handle both "stop_tts" command and "barge_in_detected" type
                     should_stop = False
                     if control_data.get("command") == "stop_tts" and conv_id_to_stop:

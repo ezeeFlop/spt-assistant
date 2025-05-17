@@ -9,8 +9,10 @@ interface PartialTranscriptMessage {
 
 interface FinalTranscriptMessage {
   type: "final_transcript";
-  text: string;
+  transcript: string;
   timestamp: number; 
+  conversation_id?: string;
+  is_final?: boolean;
 }
 
 interface LlmTokenMessage {
@@ -84,6 +86,13 @@ export interface SystemEventMessage {
   conversation_id: string;
 }
 
+// New message for barge-in notification from the server
+export interface BargeInNotificationMessage {
+  type: "barge_in_notification";
+  conversation_id: string;
+  timestamp_ms?: number; // Optional, as it's for client awareness
+}
+
 export type ServerMessage = 
   | PartialTranscriptMessage 
   | FinalTranscriptMessage 
@@ -95,7 +104,8 @@ export type ServerMessage =
   | RawAudioChunkMessage
   | AudioStreamEndMessage
   | AudioStreamErrorMessage
-  | SystemEventMessage;
+  | SystemEventMessage
+  | BargeInNotificationMessage;
 
 interface UseWebSocketOptions {
   url: string;

@@ -2,7 +2,11 @@
 # This file will contain the AudioProcessor class/functions
 
 import torch
-#import whisperx # Replaced faster_whisper
+try:
+    import whisperx # Replaced faster_whisper
+except ImportError:
+    whisperx = None
+
 from faster_whisper import WhisperModel
 
 import numpy as np
@@ -39,7 +43,7 @@ MIN_DURATION_FOR_PROPER_START_S = 0.75
 class AudioProcessor:
     def __init__(self):
         self.logger = get_logger(__name__) # Initialize instance logger
-        self.logger.info("Initializing AudioProcessor (whisperx & VADIterator pattern)...")
+        self.logger.info(f"Initializing AudioProcessor (whisper & VADIterator pattern) Targeted device: {worker_settings.FINAL_STT_DEVICE}...")
         self.audio_buffer = np.array([], dtype=np.float32)
         
         # VAD and STT should operate at the same configured sample rate
@@ -98,8 +102,7 @@ class AudioProcessor:
             self.logger.error(f"Error initializing VADIterator: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize VADIterator: {e}")
 
-        # STT Model (WhisperX)
-        self.logger.info(f"Loading STT model (WhisperX): {worker_settings.STT_MODEL_NAME} on device: {worker_settings.FINAL_STT_DEVICE} with compute_type: {worker_settings.STT_COMPUTE_TYPE}")
+        self.logger.info(f"Loading STT model (Whisper): {worker_settings.STT_MODEL_NAME} on device: {worker_settings.FINAL_STT_DEVICE} with compute_type: {worker_settings.STT_COMPUTE_TYPE}")
         try:
             # Ensure language is set, default to 'en' if not specified or invalid
             stt_language = worker_settings.STT_LANGUAGE if worker_settings.STT_LANGUAGE else "en"
@@ -111,20 +114,21 @@ class AudioProcessor:
                      self.logger.warning(f"Derived language code '{stt_language_code}' not in common list, WhisperX might default or error. Original: {stt_language}")
                 stt_language = stt_language_code
 
-            self.stt_model = WhisperModel(
-                worker_settings.STT_MODEL_NAME,
-                device=worker_settings.FINAL_STT_DEVICE,
-                compute_type=worker_settings.STT_COMPUTE_TYPE
-            )
-
-            # self.stt_model = whisperx.load_model(
-            #     worker_settings.STT_MODEL_NAME,
-            #     device=worker_settings.FINAL_STT_DEVICE,
-            #     compute_type=worker_settings.STT_COMPUTE_TYPE,
-            #     language=stt_language if stt_language else None, # Pass None if empty to let whisperx use its default multi-language detection.
-            #     # asap_options={"model_path": "some_path"} # For custom ASR alignment model path if needed
-            #     # hf_token = "YOUR_HF_TOKEN" # If models are gated on Hugging Face
-            # )
+            if whisperx is None:
+                self.stt_model = WhisperModel(
+                    worker_settings.STT_MODEL_NAME,
+                    device=worker_settings.FINAL_STT_DEVICE,
+                    compute_type=worker_settings.STT_COMPUTE_TYPE
+                )
+            else:
+                self.stt_model = whisperx.load_model(
+                    worker_settings.STT_MODEL_NAME,
+                    device=worker_settings.FINAL_STT_DEVICE,
+                    compute_type=worker_settings.STT_COMPUTE_TYPE,
+                    language=stt_language if stt_language else None, # Pass None if empty to let whisperx use its default multi-language detection.
+                    # asap_options={"model_path": "some_path"} # For custom ASR alignment model path if needed
+                    # hf_token = "YOUR_HF_TOKEN" # If models are gated on Hugging Face
+                )
             self.stt_batch_size = getattr(worker_settings, 'STT_BATCH_SIZE', 16) # From example or config
             self.logger.info(f"WhisperX STT model loaded successfully. Language: {stt_language if stt_language else 'auto-detect'}. Batch size: {self.stt_batch_size}.")
         except Exception as e:
@@ -325,34 +329,30 @@ class AudioProcessor:
                         # Ensure utterance_audio_buffer_float32 is C-contiguous if whisperX requires
                         audio_to_transcribe = np.ascontiguousarray(self.utterance_audio_buffer_float32)
                         
-                       #transcription_result = self.stt_model.transcribe(
-                       #     audio_to_transcribe,
-                       #     batch_size=self.stt_batch_size
-                       #     # chunk_size = for long audio, but here utterance should be relatively short
-                       # )
-                        transcription_result, info = self.stt_model.transcribe(
-                            audio_to_transcribe,
-                            beam_size=self.stt_batch_size,
-                            language=worker_settings.STT_LANGUAGE,
-                            word_timestamps=True,
-
-                            # chunk_size = for long audio, but here utterance should be relatively short
-                        )
-                        
-                        #full_text = "".join(segment["text"] for segment in transcription_result.get("segments", [])).strip()
                         full_text = ""
-                        current_transcript_words = []
-                        for word_segment in transcription_result: 
-                            # self.logger.info(f"STT segment: {word_segment}") # Can be very verbose
-                            if not word_segment.words: # Handle cases where Whisper gives text but no word timestamps
-                                if word_segment.text.strip(): 
-                                    current_transcript_words.append({"word": word_segment.text.strip(), "start": word_segment.start, "end": word_segment.end})
-                            else:
-                                for word_info in word_segment.words:
-                                    current_transcript_words.append({"word": word_info.word, "start": word_info.start, "end": word_info.end})
-                        full_text = " ".join([word["word"] for word in current_transcript_words])
-
-
+                        if whisperx is None:
+                            transcription_result, info = self.stt_model.transcribe(
+                                audio_to_transcribe,
+                                beam_size=self.stt_batch_size,
+                                language=worker_settings.STT_LANGUAGE,
+                                word_timestamps=True,
+                            )
+                            current_transcript_words = []
+                            for word_segment in transcription_result: 
+                                if not word_segment.words: # Handle cases where Whisper gives text but no word timestamps
+                                    if word_segment.text.strip(): 
+                                        current_transcript_words.append({"word": word_segment.text.strip(), "start": word_segment.start, "end": word_segment.end})
+                                else:
+                                    for word_info in word_segment.words:
+                                        current_transcript_words.append({"word": word_info.word, "start": word_info.start, "end": word_info.end})
+                            full_text = " ".join([word["word"] for word in current_transcript_words])
+                        else:
+                            transcription_result = self.stt_model.transcribe(
+                                audio_to_transcribe,
+                                batch_size=self.stt_batch_size
+                                # chunk_size = for long audio, but here utterance should be relatively short
+                            )
+                            full_text = "".join(segment["text"] for segment in transcription_result.get("segments", [])).strip()
 
                         if full_text:
                             self.logger.info(f"Transcription result: '{full_text}'")
@@ -366,7 +366,6 @@ class AudioProcessor:
                             self.logger.info("Transcription resulted in empty text.")
                             # Optionally yield a specific event for empty transcription if needed
                             # yield {"event_type": "vad_event", "status": "empty_transcription", "timestamp_ms": time.time() * 1000}
-
 
                     except Exception as e:
                         self.logger.error(f"Error during WhisperX STT processing: {e}", exc_info=True)
