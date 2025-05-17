@@ -13,6 +13,7 @@ COPY frontend/ ./
 # Build the frontend
 # Assuming your build script outputs to /app/frontend/dist
 RUN npm run build
+COPY frontend/config.js /app/frontend/dist/config.js
 
 # Stage 2: Python Backend (FastAPI)
 FROM python:3.12-slim

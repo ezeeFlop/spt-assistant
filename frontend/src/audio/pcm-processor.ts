@@ -2,10 +2,6 @@
 // @ts-ignore
 /// <reference types="audioworklet" />
 
-// --- Temporary TypeScript Workaround for AudioWorklet ---
-// In a real project, ensure you have @types/audioworklet or similar installed
-// and your tsconfig.json is set up to include web worker/worklet types.
-
 declare var globalThis: AudioWorkletGlobalScope;
 
 interface AudioWorkletProcessor {

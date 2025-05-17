@@ -1,7 +1,7 @@
 // frontend/src/hooks/useAudioStreamer.ts
 import { useState, useRef, useCallback, useEffect } from 'react';
 import useAppStore from '../store/useAppStore';
-import pcmProcessorUrl from '../audio/pcm-processor.js?url'; // Vite-specific ?url import, assuming .ts is compiled to .js by Vite
+import PcmProcessorWorkerModuleURL from '../audio/pcm-processor.ts?worker&url';
 
 interface UseAudioStreamerOptions {
   onAudioChunk: (chunk: ArrayBuffer) => void; // This will now receive ArrayBuffer of Int16 PCM data
@@ -86,10 +86,15 @@ const useAudioStreamer = ({
 
       // 3. Load and Connect Audio Worklet
       try {
-        await context.audioWorklet.addModule(pcmProcessorUrl);
+        // const processorUrl = new URL('../audio/pcm-processor.ts', import.meta.url).href; // Previous attempt
+        const processorUrl = PcmProcessorWorkerModuleURL;
+        await context.audioWorklet.addModule(processorUrl, { type: 'module' } as WorkletOptions);
       } catch (e: any) {
+        // Construct the URL again for the error message, or ensure it's in scope
+        // const processorUrlForError = new URL('../audio/pcm-processor.ts', import.meta.url).href; // Previous attempt
+        const processorUrlForError = PcmProcessorWorkerModuleURL; // Use the same variable
         console.error('Error adding audio worklet module:', e);
-        onError(new Error(`Failed to load audio processor: ${e.message}. Check console for details. Path used: ${pcmProcessorUrl}`));
+        onError(new Error(`Failed to load audio processor: ${e.message}. Check console for details. Path used: ${processorUrlForError}`));
         stopMediaTracksAndContext();
         setIsRecording(false);
         return;
