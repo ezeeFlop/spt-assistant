@@ -5,6 +5,8 @@ import time
 import redis.asyncio as redis
 from dotenv import load_dotenv
 from typing import Dict, List, Optional, Union, Any
+import nltk
+import nltk.tokenize
 
 from llm_orchestrator_worker.config import orchestrator_settings
 from llm_orchestrator_worker.logging_config import get_logger
@@ -35,16 +37,17 @@ async def get_conversation_history(conversation_id: str, redis_client: redis.Red
     if history_json:
         try:
             # Ensure messages are loaded as Message type (or dicts that conform)
+            # Since Message is a class inheriting from Dict, direct instantiation is fine.
             return [Message(**msg) for msg in json.loads(history_json)]
         except json.JSONDecodeError:
             logger.error(f"Failed to decode conversation history for {conversation_id} from Redis.")
             return [] # Return empty list on decode error
     return []
 
-async def save_conversation_history(conversation_id: str, history: List[Message], redis_client: redis.Redis):
+async def save_conversation_history(conversation_id: str, history: List[Dict], redis_client: redis.Redis):
     """Saves conversation history to Redis with TTL."""
     history_key = f"{orchestrator_settings.CONVERSATION_HISTORY_PREFIX}{conversation_id}"
-    # Convert list of Message objects (which are dicts) to JSON string
+    # History should now be a list of dicts, ready for JSON serialization.
     await redis_client.set(history_key, json.dumps(history), ex=orchestrator_settings.CONVERSATION_DATA_TTL_SECONDS)
 
 async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService, tool_router: ToolRouter, redis_client: redis.Redis):
@@ -84,9 +87,48 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
     max_tool_recursion = 5
     current_tool_recursion = 0
 
+    # Helper function to send sentences to TTS
+    async def _send_sentence_to_tts(sentence: str, conv_id: str, config: Dict, client: redis.Redis):
+        if sentence and sentence.strip():
+            tts_req_message = {
+                "text_to_speak": sentence.strip(),
+                "conversation_id": conv_id,
+                "voice_id": config.get("tts_voice_id", orchestrator_settings.DEFAULT_TTS_VOICE_ID if hasattr(orchestrator_settings, 'DEFAULT_TTS_VOICE_ID') else None)
+            }
+            await client.publish(orchestrator_settings.TTS_REQUEST_CHANNEL, json.dumps(tts_req_message))
+            logger.info(f"Published TTS request for conv_id '{conv_id}': '{sentence.strip()}'")
+
+    # Attempt to download nltk.punkt if not available, with a flag to prevent repeated attempts per run
+    if not hasattr(process_llm_interaction, '_punkt_download_attempted'):
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except nltk.downloader.DownloadError:
+            logger.warning("NLTK 'punkt' tokenizer not found. Attempting to download...")
+            try:
+                nltk.download('punkt', quiet=True)
+                logger.info("NLTK 'punkt' tokenizer downloaded successfully.")
+            except Exception as e:
+                logger.error(f"Failed to download NLTK 'punkt' tokenizer: {e}. Sentence tokenization for TTS might fail.", exc_info=True)
+        except LookupError: # Handles cases where nltk.data.find itself fails if punkt is missing from default paths
+            logger.warning("NLTK 'punkt' tokenizer not found (LookupError). Attempting to download...")
+            try:
+                nltk.download('punkt', quiet=True)
+                logger.info("NLTK 'punkt' tokenizer downloaded successfully.")
+            except Exception as e:
+                logger.error(f"Failed to download NLTK 'punkt' tokenizer: {e}. Sentence tokenization for TTS might fail.", exc_info=True)
+        setattr(process_llm_interaction, '_punkt_download_attempted', True)
+
     while current_tool_recursion < max_tool_recursion:
         assistant_response_content = ""
         active_tool_calls: List[Dict] = []
+        sentence_buffer = ""
+        punkt_available = True # Assume available unless a LookupError occurs
+
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except (nltk.downloader.DownloadError, LookupError):
+            logger.warning("NLTK 'punkt' tokenizer not available during LLM interaction. TTS will be sent at the end of the full response if no tool calls are made, or not at all for intermediate text before tool calls if 'punkt' is missing.")
+            punkt_available = False
         
         async for response_part in llm_service.generate_response_stream(
             conversation_id, # Pass conversation_id
@@ -96,11 +138,47 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
             max_tokens_override=current_max_tokens
         ):
             if isinstance(response_part, str): # Token
-                assistant_response_content += response_part
+                assistant_response_content += response_part # Accumulate full response for history
+                
+                if punkt_available:
+                    sentence_buffer += response_part
+                    try:
+                        sentences = nltk.tokenize.sent_tokenize(sentence_buffer)
+                        if sentences:
+                            for i, sentence in enumerate(sentences):
+                                if i < len(sentences) - 1: # It's a complete sentence
+                                    await _send_sentence_to_tts(sentence, conversation_id, conv_config, redis_client)
+                                    sentence_buffer = sentence_buffer.replace(sentence, "", 1).lstrip() # Remove sent part
+                                else: # Last part, might be incomplete
+                                    # If the original buffer ended with sentence-ending punctuation,
+                                    # this last part is also a complete sentence.
+                                    if sentence_buffer.strip() == sentence.strip() and any(sentence_buffer.endswith(p) for p in ['.', '!', '?']):
+                                        await _send_sentence_to_tts(sentence, conversation_id, conv_config, redis_client)
+                                        sentence_buffer = ""
+                                    else: # It's a fragment, keep it
+                                        sentence_buffer = sentence 
+                    except LookupError:
+                        # This should ideally be caught by the check before the loop,
+                        # but as a safeguard if punkt disappears mid-process or initial check fails.
+                        if punkt_available: # Log only once per interaction if it becomes unavailable
+                           logger.warning(f"NLTK 'punkt' tokenizer not found during streaming for conv_id '{conversation_id}'. Will accumulate response and send to TTS at the end if no tools, or not for partials.")
+                        punkt_available = False
+                        # Fallback: just accumulate if punkt is not available.
+                        # No sentence-by-sentence TTS if punkt is missing.
+                else: # punkt not available, just accumulate
+                    sentence_buffer += response_part
+
+                # Publish token to Redis (existing logic)
                 token_message = {"type": "token", "role": "assistant", "content": response_part, "conversation_id": conversation_id}
                 await redis_client.publish(orchestrator_settings.LLM_TOKEN_CHANNEL, json.dumps(token_message))
+
             elif isinstance(response_part, dict): # Tool call
                 logger.info(f"LLM requested tool call for conv_id '{conversation_id}': {response_part}")
+                # Flush any remaining text in sentence_buffer to TTS before tool call
+                if sentence_buffer.strip():
+                    await _send_sentence_to_tts(sentence_buffer, conversation_id, conv_config, redis_client)
+                    sentence_buffer = "" # Clear buffer after flushing
+
                 active_tool_calls.append(response_part)
                 tool_status_msg = {
                     "type": "tool", "name": response_part.get("function", {})["name"], 
@@ -108,6 +186,11 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
                 }
                 await redis_client.publish(orchestrator_settings.LLM_TOOL_CALL_CHANNEL, json.dumps(tool_status_msg))
         
+        # After stream, if there's remaining text in sentence_buffer and no tool calls, send it to TTS
+        if sentence_buffer.strip() and not active_tool_calls:
+            await _send_sentence_to_tts(sentence_buffer, conversation_id, conv_config, redis_client)
+            sentence_buffer = "" # Clear buffer
+
         if assistant_response_content.strip() or active_tool_calls:
             assistant_message = Message(role="assistant", content=assistant_response_content.strip() or None)
             if active_tool_calls:
@@ -116,13 +199,16 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
 
         if not active_tool_calls:
             if assistant_response_content.strip():
-                tts_req_message = {
-                    "text_to_speak": assistant_response_content.strip(), 
-                    "conversation_id": conversation_id,
-                    "voice_id": conv_config.get("tts_voice_id", orchestrator_settings.DEFAULT_TTS_VOICE_ID if hasattr(orchestrator_settings, 'DEFAULT_TTS_VOICE_ID') else None) # Use configured voice
-                }
-                await redis_client.publish(orchestrator_settings.TTS_REQUEST_CHANNEL, json.dumps(tts_req_message))
-                logger.info(f"Published TTS request for conv_id '{conversation_id}': '{assistant_response_content.strip()}'")
+                # TTS request is now handled by sentence-by-sentence logic or final buffer flush above.
+                # The original full response TTS publish is removed from here.
+                # tts_req_message = {
+                #     "text_to_speak": assistant_response_content.strip(), 
+                #     "conversation_id": conversation_id,
+                #     "voice_id": conv_config.get("tts_voice_id", orchestrator_settings.DEFAULT_TTS_VOICE_ID if hasattr(orchestrator_settings, 'DEFAULT_TTS_VOICE_ID') else None) 
+                # }
+                # await redis_client.publish(orchestrator_settings.TTS_REQUEST_CHANNEL, json.dumps(tts_req_message))
+                # logger.info(f"Published TTS request for conv_id '{conversation_id}': '{assistant_response_content.strip()}'")
+                pass # Ensure this block doesn't cause syntax error if all content is removed.
             break
 
         tool_results: List[Message] = []
@@ -149,10 +235,25 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
         if current_tool_recursion >= max_tool_recursion:
             logger.warning(f"Max tool recursion depth for conv_id '{conversation_id}'")
             error_summary = "[Tool processing limit reached]"
-            tts_req_message = {"text_to_speak": error_summary, "conversation_id": conversation_id, "voice_id": conv_config.get("tts_voice_id", orchestrator_settings.DEFAULT_TTS_VOICE_ID if hasattr(orchestrator_settings, 'DEFAULT_TTS_VOICE_ID') else None)}
-            await redis_client.publish(orchestrator_settings.TTS_REQUEST_CHANNEL, json.dumps(tts_req_message))
+            # Send this specific error summary to TTS
+            await _send_sentence_to_tts(error_summary, conversation_id, conv_config, redis_client)
+            # Original TTS publish for error_summary removed as it's handled by _send_sentence_to_tts
+            # tts_req_message = {"text_to_speak": error_summary, "conversation_id": conversation_id, "voice_id": conv_config.get("tts_voice_id", orchestrator_settings.DEFAULT_TTS_VOICE_ID if hasattr(orchestrator_settings, 'DEFAULT_TTS_VOICE_ID') else None)}
+            # await redis_client.publish(orchestrator_settings.TTS_REQUEST_CHANNEL, json.dumps(tts_req_message))
             break
-    await save_conversation_history(conversation_id, history, redis_client)
+    # Ensure history is saved with Message model instances or dicts that can be serialized
+    serializable_history = []
+    for item in history:
+        if isinstance(item, Message):
+            # Message inherits from Dict, so it's already dict-like.
+            # To be absolutely sure it's a plain dict for JSON serialization:
+            serializable_history.append(dict(item))
+        elif isinstance(item, dict): # Already a dict, ensure it's suitable
+            serializable_history.append(item)
+        else:
+            logger.warning(f"Unexpected item type in history for conv_id '{conversation_id}': {type(item)}. Skipping serialization for this item.")
+
+    await save_conversation_history(conversation_id, serializable_history, redis_client)
 
 async def subscribe_to_transcripts(redis_client: redis.Redis, llm_service: LLMService, tool_router: ToolRouter):
     pubsub = redis_client.pubsub()
