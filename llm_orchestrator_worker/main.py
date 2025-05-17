@@ -13,6 +13,7 @@ from llm_orchestrator_worker.logging_config import get_logger
 from llm_orchestrator_worker.llm_service import LLMService, Message
 from llm_orchestrator_worker.tool_router import ToolRouter
 
+nltk.download('punkt')
 # Load .env file
 load_dotenv(dotenv_path="llm_orchestrator/.env")
 
@@ -78,7 +79,7 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
         return
 
     if not history:
-        history.append(Message(role="system", content="You are a helpful French voice assistant."))
+        history.append(Message(role="system", content="You are a helpful French voice assistant, your name is TARA. Make sure to NEVER generate MARKDOWN or HTML code in your responses."))
     history.append(Message(role="user", content=user_text))
 
     if len(history) > orchestrator_settings.MAX_CONVERSATION_HISTORY * 2:

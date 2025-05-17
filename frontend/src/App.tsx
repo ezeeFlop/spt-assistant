@@ -1,5 +1,5 @@
 import './App.css';
-import useAppStore, { type ChatMessage } from './store/useAppStore';
+import useAppStore from './store/useAppStore';
 import useWebSocket, { type ServerMessage } from './hooks/useWebSocket';
 import useAudioStreamer from './hooks/useAudioStreamer';
 import useStreamedAudioPlayer from './hooks/useStreamedAudioPlayer';
@@ -28,7 +28,6 @@ function App() {
     setAudioPlaybackError,
     selectedMicId,
     setActiveConversationId,
-    activeConversationId,
   } = useAppStore();
 
   // 2. useState for local component state

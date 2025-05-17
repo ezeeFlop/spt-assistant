@@ -30,6 +30,7 @@ class OrchestratorSettings(BaseSettings):
     LLM_TEMPERATURE: float = 0.7
     # Define a default conversation history length
     MAX_CONVERSATION_HISTORY: int = 10 # Number of turns (user + assistant) to keep
+    SYSTEM_PROMPT: str = "You are a helpful French voice assistant, your name is TARA. Make sure to NEVER generate MARKDOWN or HTML code in your responses."
 
     # Default TTS voice if not specified in conversation config (should match a key from tts_service)
     DEFAULT_TTS_VOICE_ID: Optional[str] = "fr_FR-siwis-medium.onnx" # Example default
