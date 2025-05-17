@@ -1,0 +1,106 @@
+.chat-display-container {
+  height: 350px; /* Adjust as needed */
+  overflow-y: auto;
+  padding: 15px;
+  background-color: rgba(10, 30, 50, 0.7); /* Dark, slightly transparent blue */
+  border: 1px solid rgba(0, 255, 255, 0.3); /* Cyan border, slightly transparent */
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.2); /* Subtle cyan glow */
+}
+
+.chat-message-wrapper {
+  display: flex;
+  max-width: 85%; /* Max width of a message bubble */
+}
+
+.chat-message {
+  padding: 10px 15px;
+  border-radius: 15px;
+  line-height: 1.4;
+  color: #e0f7fa; /* Light cyan text for readability */
+  word-wrap: break-word;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+.chat-message p {
+  margin: 0;
+}
+
+/* User messages */
+.user-wrapper {
+  align-self: flex-end;
+  margin-left: auto;
+}
+.chat-message.user {
+  background: linear-gradient(135deg, #00527a, #0070a3); /* Gradient blue for user */
+  border-top-right-radius: 5px; /* Slightly different shape for user */
+}
+
+/* Assistant messages */
+.assistant-wrapper {
+  align-self: flex-start;
+  margin-right: auto;
+}
+.chat-message.assistant {
+  background: linear-gradient(135deg, #2a2a52, #383870); /* Gradient purple/dark blue for assistant */
+  border-top-left-radius: 5px; /* Slightly different shape for assistant */
+}
+
+/* Tool status messages */
+.tool_status-wrapper {
+  align-self: center;
+  width: 100%;
+  max-width: 100%;
+}
+.chat-message.tool_status {
+  background-color: rgba(74, 74, 94, 0.8); /* Greyish, less prominent */
+  color: #b0bec5; /* Lighter grey text */
+  font-style: italic;
+  font-size: 0.85em;
+  text-align: center;
+  width: auto; /* take available width */
+  display: inline-block; /* center content */
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 6px 10px;
+  border-radius: 5px;
+}
+
+/* Partial transcript messages */
+.partial_transcript-wrapper {
+ align-self: flex-start; /* Match assistant for now, or center */
+ margin-top: 5px; /* Add a little space if it appears after full messages */
+}
+.chat-message.partial_transcript {
+  background-color: transparent; /* No background for partial */
+  color: rgba(170, 220, 255, 0.7); /* Lighter, less prominent text */
+  font-style: italic;
+  font-size: 0.95em;
+  padding: 2px 5px;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+/* Scrollbar styling for webkit browsers */
+.chat-display-container::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chat-display-container::-webkit-scrollbar-track {
+  background: rgba(10, 30, 50, 0.5); /* Dark track */
+  border-radius: 5px;
+}
+
+.chat-display-container::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 255, 255, 0.5); /* Cyan thumb, semi-transparent */
+  border-radius: 5px;
+  border: 2px solid rgba(10, 30, 50, 0.5); /* Border matching track */
+}
+
+.chat-display-container::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 255, 255, 0.8); /* Brighter cyan on hover */
+} 

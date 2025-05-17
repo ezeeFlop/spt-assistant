@@ -38,11 +38,15 @@ export interface UseStreamedAudioPlayerReturn {
   endAudioStream: () => Promise<void>;
   stopAudioPlayback: () => void;
   isPlaying: boolean;
+  playbackAudioLevel: number;
   error: string | null;
 }
 
 const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
   const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserNodeRef = useRef<AnalyserNode | null>(null);
+  const animationFrameIdRef = useRef<number | null>(null);
+  const dataArrayRef = useRef<Uint8Array | null>(null);
   
   // For the sentence currently being received from the server
   const currentSentenceChunksRef = useRef<ArrayBuffer[]>([]);
@@ -55,6 +59,7 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [playbackAudioLevel, setPlaybackAudioLevel] = useState<number>(0);
 
   // Internal state to trigger processing the queue
   const [triggerPlay, setTriggerPlay] = useState<number>(0);
@@ -63,8 +68,12 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
     if (!audioContextRef.current) {
       try {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        analyserNodeRef.current = audioContextRef.current.createAnalyser();
+        analyserNodeRef.current.fftSize = 2048;
+        const bufferLength = analyserNodeRef.current.frequencyBinCount;
+        dataArrayRef.current = new Uint8Array(bufferLength);
       } catch (e) {
-        console.error("StreamedAudioPlayer: Failed to create AudioContext:", e);
+        console.error("StreamedAudioPlayer: Failed to create AudioContext or AnalyserNode:", e);
         setError("AudioContext not supported or failed to initialize.");
         return null;
       }
@@ -77,53 +86,91 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
     return audioContextRef.current;
   }, []);
 
+  const stopAudioLevelMonitoring = useCallback(() => {
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current);
+      animationFrameIdRef.current = null;
+    }
+    setPlaybackAudioLevel(0);
+  }, []);
+
+  const monitorAudioLevel = useCallback(() => {
+    if (!analyserNodeRef.current || !dataArrayRef.current || !currentSourceNodeRef.current) {
+      stopAudioLevelMonitoring();
+      return;
+    }
+
+    analyserNodeRef.current.getByteTimeDomainData(dataArrayRef.current);
+    
+    let sumSquares = 0.0;
+    for (let i = 0; i < dataArrayRef.current.length; i++) {
+      const normSample = (dataArrayRef.current[i] / 128.0) - 1.0;
+      sumSquares += normSample * normSample;
+    }
+    const rms = Math.sqrt(sumSquares / dataArrayRef.current.length);
+    
+    const normalizedLevel = Math.min(rms * 1.5, 1.0);
+
+    setPlaybackAudioLevel(normalizedLevel);
+
+    animationFrameIdRef.current = requestAnimationFrame(monitorAudioLevel);
+  }, [stopAudioLevelMonitoring]);
+
   const playNextSentenceFromQueue = useCallback(() => {
     if (isPlaying || sentenceQueueRef.current.length === 0) {
       return;
     }
 
     const audioCtx = getAudioContext();
-    if (!audioCtx) {
-      console.error("StreamedAudioPlayer: No AudioContext available to play next sentence.");
+    if (!audioCtx || !analyserNodeRef.current) {
+      console.error("StreamedAudioPlayer: No AudioContext or AnalyserNode available to play next sentence.");
       return;
     }
 
-    const nextSentence = sentenceQueueRef.current.shift(); // Get and remove the next sentence
+    const nextSentence = sentenceQueueRef.current.shift();
     if (!nextSentence) return;
 
     try {
       if (currentSourceNodeRef.current) {
-        // This should ideally not happen if isPlaying is managed correctly
         console.warn("StreamedAudioPlayer: Existing source node found when trying to play next. Stopping it.");
         currentSourceNodeRef.current.onended = null;
         currentSourceNodeRef.current.stop();
+        currentSourceNodeRef.current.disconnect();
         currentSourceNodeRef.current = null;
       }
 
       const sourceNode = audioCtx.createBufferSource();
       sourceNode.buffer = nextSentence.buffer;
-      sourceNode.connect(audioCtx.destination);
+      
+      sourceNode.connect(analyserNodeRef.current);
+      analyserNodeRef.current.connect(audioCtx.destination);
       
       sourceNode.onended = () => {
         setIsPlaying(false);
+        if (currentSourceNodeRef.current) {
+            currentSourceNodeRef.current.disconnect();
+            analyserNodeRef.current?.disconnect();
+        }
         currentSourceNodeRef.current = null;
+        stopAudioLevelMonitoring();
         console.log("StreamedAudioPlayer: Sentence playback ended.");
-        setTriggerPlay(prev => prev + 1); // Trigger check for next sentence
+        setTriggerPlay(prev => prev + 1);
       };
       
       sourceNode.start();
       currentSourceNodeRef.current = sourceNode;
       setIsPlaying(true);
       setError(null);
+      animationFrameIdRef.current = requestAnimationFrame(monitorAudioLevel);
       console.log("StreamedAudioPlayer: Sentence playback started.");
     } catch (e) {
       console.error("StreamedAudioPlayer: Error playing next sentence:", e);
       setError(e instanceof Error ? e.message : "Failed to play audio sentence.");
       setIsPlaying(false);
-      // Attempt to play the next one if this fails
+      stopAudioLevelMonitoring();
       setTriggerPlay(prev => prev + 1);
     }
-  }, [isPlaying, getAudioContext]);
+  }, [isPlaying, getAudioContext, monitorAudioLevel, stopAudioLevelMonitoring]);
 
   // Effect to process queue when triggerPlay changes or isPlaying becomes false
   useEffect(() => {
@@ -133,37 +180,39 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
   const stopAudioPlayback = useCallback(() => {
     if (currentSourceNodeRef.current) {
       try {
-        currentSourceNodeRef.current.onended = null; // Important to prevent onended from triggering playNext
+        currentSourceNodeRef.current.onended = null;
         currentSourceNodeRef.current.stop();
+        currentSourceNodeRef.current.disconnect();
+        if (analyserNodeRef.current) {
+            analyserNodeRef.current.disconnect();
+        }
       } catch (e) {
         // console.warn("StreamedAudioPlayer: Error stopping source node:", e);
       }
       currentSourceNodeRef.current = null;
     }
-    sentenceQueueRef.current = []; // Clear the queue of pending sentences
-    currentSentenceChunksRef.current = []; // Clear any partially received sentence
+    stopAudioLevelMonitoring();
+    sentenceQueueRef.current = [];
+    currentSentenceChunksRef.current = [];
     setIsPlaying(false);
     console.log("StreamedAudioPlayer: Playback stopped and queue cleared.");
-  }, []);
+  }, [stopAudioLevelMonitoring]);
 
   const startAudioStream = useCallback((sampleRate: number, channels: number) => {
     console.log(`StreamedAudioPlayer: Starting new sentence stream. SR=${sampleRate}, Channels=${channels}`);
-    const audioCtx = getAudioContext(); // Ensure context is ready/resumed
+    const audioCtx = getAudioContext();
     if (!audioCtx) {
         setError("AudioContext not available when starting stream.");
         return;
     }
 
-    // Reset for the new incoming sentence, but don't stop current playback here
     currentSentenceChunksRef.current = [];
     currentSentenceSampleRateRef.current = sampleRate;
     currentSentenceChannelsRef.current = channels;
-    // setError(null); // Don't clear general errors, only playback ones during play
   }, [getAudioContext]);
 
   const enqueueAudioChunk = useCallback((chunk: ArrayBuffer) => {
     if (!currentSentenceSampleRateRef.current || !getAudioContext()) {
-      // console.warn("StreamedAudioPlayer: Sentence stream not started or no AudioContext, cannot enqueue chunk.");
       return;
     }
     currentSentenceChunksRef.current.push(chunk);
@@ -173,13 +222,12 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
     const audioCtx = getAudioContext();
     if (!audioCtx || !currentSentenceSampleRateRef.current || currentSentenceChunksRef.current.length === 0) {
       console.log(`StreamedAudioPlayer: No AudioContext, sentence stream not properly started (SR: ${currentSentenceSampleRateRef.current}), or no audio data for current sentence.`);
-      currentSentenceChunksRef.current = []; // Clear if any partial data exists for a failed stream
-      // Do not set isPlaying false here, as another sentence might be playing from the queue.
+      currentSentenceChunksRef.current = [];
       return;
     }
 
     const concatenatedBuffer = concatenateArrayBuffers(currentSentenceChunksRef.current);
-    currentSentenceChunksRef.current = []; // Reset for next sentence after consuming current chunks
+    currentSentenceChunksRef.current = [];
 
     if (concatenatedBuffer.byteLength === 0) {
         console.log("StreamedAudioPlayer: Concatenated buffer for sentence is empty.");
@@ -222,7 +270,7 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
         channels: currentSentenceChannelsRef.current
       });
       console.log(`StreamedAudioPlayer: Sentence added to queue. Queue size: ${sentenceQueueRef.current.length}`);
-      setTriggerPlay(prev => prev + 1); // Trigger the queue processor
+      setTriggerPlay(prev => prev + 1);
 
     } catch (e) {
       console.error("StreamedAudioPlayer: Error processing sentence audio buffer:", e);
@@ -236,6 +284,7 @@ const useStreamedAudioPlayer = (): UseStreamedAudioPlayerReturn => {
     endAudioStream,
     stopAudioPlayback,
     isPlaying,
+    playbackAudioLevel,
     error,
   };
 };

@@ -1,0 +1,601 @@
+/* FuturisticAnimation.css - New Styles based on template */
+/* 
+  NOTE: Global styles like '*' and 'body' from the template have been omitted 
+  as they should be in a global stylesheet (e.g., index.css or App.css) 
+  if intended to apply to the whole application.
+*/
+
+#main-animation-container { /* Renamed from #main to avoid conflict, assumes this is the root for this component */
+  display: table; /* Keeps the table-cell centering for circle-container */
+  /* height:100vh; */ /* Height will be controlled by parent in App.tsx */
+  width:100%;  /* Make it take full width of its .animation-container parent */
+  height: 100%; /* Make it take full height of its .animation-container parent */
+  position: relative; /* Needed for positioning child elements */
+  /* margin: auto; */ /* No longer needed if parent is flex centering */
+}
+
+#status-indicator { /* Renamed from #status */
+  box-shadow: 0 0 75px var(--accent-color, #2187e7);
+  border-radius: 0px 0px 15px 15px; /* Rounded corners at the bottom */
+  max-width:300px;
+  margin:auto;
+  color:#99a;
+  padding:10px;
+  position:absolute;
+  top: 0px; /* Moved to top */
+  left:0px;
+  right:0px;
+  font-size:10px;
+  text-align:center;
+  transition: all 0.5s ease;
+  z-index: 10; /* Ensure it's above other elements if necessary */
+}
+
+#status-indicator:hover { /* Renamed from #status:hover */
+  padding:15px 10px;
+  font-size:12px;
+}
+
+#circle-container {
+  display:table-cell;
+  vertical-align:middle;
+}
+
+#mainCircle{
+  position:relative;
+  max-width: 300px; /* Max width of circle assembly */
+  max-height:300px; /* Max height of circle assembly */
+  margin: auto; /* This will center the circle assembly within #circle-container */
+  /* Reactive box-shadow will be applied via style prop based on audioLevel */
+}
+
+#mainCircleContent{
+  position:absolute;
+  top:0px;
+  height:100%;
+  width:100%;
+  cursor:pointer;
+  border-radius:50%;
+  color:#ccc;
+  animation:fadeText 3s infinite linear;
+  font-size:30px; /* Reduced font size for TALK/TARA to fit better */
+}
+
+#mainCircleText{
+  /* visibility:hidden; */ /* Control visibility via state/prop if needed */
+  text-align:center;
+  vertical-align:middle;
+  margin-top: 50%;
+  transform: translateY(-50%);
+  color:#ccc;
+  animation:fadeText 3s infinite linear;
+  font-size:50px; /* This might be too large for a 300px circle, adjust as needed */
+}
+
+.animated-circle {
+    background-color: rgba(0,0,0,0);
+    opacity: .9;
+    border-radius: 300px; /* Fixed to match #mainCircle dimensions */
+    box-shadow: 0 0 35px #2187e7; /* Base shadow */
+    width: 300px;
+    height: 300px;
+    margin: 0 auto;
+    animation: spinPulseOuter 2s infinite ease-in-out;
+    /* Reactive box-shadow will be applied via style prop based on audioLevel */
+}
+
+.animated-circle-inner {
+    background-color: rgba(0,0,0,0);
+    border: 5px solid var(--accent-color-rgb-09, rgba(0,183,229,0.9)); /* Use CSS var if available */
+    opacity: .9;
+    border-left: 5px solid rgba(0,0,0,0); /* Creates the gap for spinning effect */
+    border-right: 5px solid rgba(0,0,0,0); /* Creates the gap for spinning effect */
+    border-radius: 250px; /* Fixed to match inner dimensions */
+    box-shadow: 0 0 50px var(--accent-color, #2187e7); /* Ensure base shadow uses theme color */
+    width: 250px;
+    height: 250px;
+    margin: 0 auto;
+    position: absolute;
+    top: 25px; /* (300-250)/2 */
+    left: 25px; /* (300-250)/2 */
+    animation: spinPulseInner 4s infinite linear;
+    /* Reactive box-shadow will be applied via style prop based on audioLevel */
+}
+
+/* Removed -moz-keyframes as -webkit- and standard are generally sufficient */
+
+@keyframes spinPulseOuter { /* Renamed from spinPulse for clarity */
+    0% {
+      transform:scale(1.05);
+      /* box-shadow: 0 0 35px #2187e7; */ /* Handled by audioLevel */
+    }
+    70% {
+      transform:scale(0.98);
+       /* box-shadow: 0 0 75px #2187e7; */ /* Example of intensified shadow, will be dynamic */
+    }
+  100%{
+    transform:scale(1.05);
+    /* box-shadow: 0 0 35px #2187e7; */
+  }
+}
+
+@keyframes spinPulseInner { /* Renamed from spinoffPulse for clarity */
+    0% {
+        transform: rotate(0deg) scale(1);
+    }
+    10%{
+      transform: rotate(90deg);
+    }
+    20%{
+      transform: rotate(-90deg) scale(1.03);
+    }
+    40%{
+      transform: rotate(180deg) scale(0.97);
+    }
+    70%{
+      transform: rotate(-180deg) scale(1.03);
+    }
+    100% {
+        transform: rotate(360deg) scale(1);
+    };
+}
+@keyframes fadeText{ /* Renamed from fade */
+  0%{opacity:0.7;}
+  50%{opacity:0.2;}
+  100%{opacity:0.7;}
+}
+
+.loading-bars-container{
+  position: absolute; /* Position relative to #main-animation-container or another positioned parent */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%); 
+  width: 60px;
+  height: 60px;
+  list-style: none;
+  padding: 0; /* Reset list padding */
+  margin: 0; /* Reset list margin */
+  z-index: 3; /* Ensure it's above circles if needed */
+  display: flex; /* Use flex for alignment if needed */
+  justify-content: center;
+  align-items: center;
+}
+
+@keyframes loadbars-animation {
+	0%{
+		height: 10px;
+		margin-top: 25px; /* (60-10)/2 */
+    opacity: 0.5;
+	}
+	50%{
+		height:50px;
+		margin-top: 5px; /* (60-50)/2 */
+    opacity: 1;
+	}
+	100%{
+		height: 10px;
+		margin-top: 25px;
+    opacity: 0.5;
+	}
+}
+
+.loading-bars-container li{
+  background-color: var(--accent-color, #FFFFFF); /* Changed to accent color */
+  width: 10px;
+  height: 10px; /* Initial height, animation will change it */
+  /* float: right; */ /* Replaced by flex layout in parent */
+  margin-right: 5px;
+  box-shadow: 0px 10px 20px rgba(0,0,0,0.2);
+}
+
+.loading-bars-container li:last-child {
+  margin-right: 0;
+}
+
+.loading-bars-container li:first-child{
+  animation: loadbars-animation 0.6s cubic-bezier(0.645,0.045,0.355,1) infinite 0s;
+}
+.loading-bars-container li:nth-child(2){
+  animation: loadbars-animation 0.6s cubic-bezier(0.645,0.045,0.355,1) infinite -0.2s;
+}
+.loading-bars-container li:nth-child(3){
+  animation: loadbars-animation 0.6s cubic-bezier(0.645,0.045,0.355,1) infinite -0.4s;
+}
+
+/* Styles for when audio is active, can be applied dynamically or by adding a class */
+.audio-active .animated-circle,
+.audio-active .animated-circle-inner {
+  /* This is an example, we'll use inline styles for dynamic glow based on audioLevel */
+  /* box-shadow: 0 0 150px #2187e7; */
+}
+
+/* Hide main text if loading bars are shown, can be controlled by a class */
+.loading #mainCircleText {
+  visibility: hidden;
+}
+
+/* FuturisticAnimation.css */
+:root {
+  --base-accent-color: 0, 255, 255; /* Cyan, as RGB components for rgba() */
+  --base-bg-color: #050a14; /* Very dark blue/black */
+  --line-thickness: 1px;
+  --thin-line-thickness: 0.5px;
+}
+
+.animation-container-2d {
+  width: 100%;
+  height: 100%;
+  min-height: 400px; /* Match the JSX */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--base-bg-color);
+  border-radius: 10px; /* Keep consistent with App.css animation-container */
+  box-shadow: 0 0 15px rgba(var(--base-accent-color), var(--glow-opacity, 0.5)),
+              inset 0 0 20px rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.3));
+  border: 1px solid rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.7));
+}
+
+.static-background-elements {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+}
+
+.radial-line {
+  position: absolute;
+  bottom: 50%;
+  left: 50%;
+  width: var(--thin-line-thickness);
+  height: 50%; /* Extends from center to edge */
+  background-color: rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.3) * 0.5));
+  transform-origin: bottom center;
+  opacity: calc(0.2 + var(--audio-level, 0) * 0.3);
+}
+
+.ring-layer {
+  position: absolute;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transform-origin: center center;
+  box-sizing: border-box;
+  animation-name: rotate;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  /* Glow effect will be primarily on the border or pseudo-elements */
+  box-shadow: 0 0 calc(5px + var(--audio-level, 0) * 15px) rgba(var(--base-accent-color), var(--glow-opacity, 0.5)),
+              inset 0 0 calc(3px + var(--audio-level, 0) * 10px) rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.3));
+}
+
+/* Base rotation, can be overridden by specific ring types for direction */
+@keyframes rotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.ring-solid {
+  border: var(--line-thickness) solid rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.8));
+}
+
+.ring-thick-solid {
+  border: calc(var(--line-thickness) * 2.5) solid rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.9));
+}
+
+.ring-dashed {
+  border: var(--line-thickness) dashed rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.7));
+  animation-direction: reverse; /* Vary rotation */
+}
+
+.ring-fine-dotted {
+  border: var(--thin-line-thickness) dotted rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.6));
+}
+
+.ring-segments {
+  border: none; /* Segments are drawn differently */
+  animation-direction: reverse;
+}
+
+.ring-segment {
+  position: absolute;
+  width: 100%; 
+  height: 100%;
+  border-radius: 50%;
+  border: var(--line-thickness) solid transparent; /* Base for segments */
+  border-top-color: rgba(var(--base-accent-color), var(--glow-opacity, 0.7)); /* Only one side colored to make arc */
+  box-sizing: border-box;
+  /* transform-origin will be key here along with skew for arc segments. The JSX applies transform. */
+  filter: drop-shadow(0 0 calc(3px + var(--audio-level, 0) * 5px) rgba(var(--base-accent-color), var(--glow-opacity, 0.7)));
+}
+
+
+.ring-scanner {
+  border: var(--line-thickness) solid rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.5));
+  position: relative;
+}
+
+.scanner-gap {
+  position: absolute;
+  top: -1px; /* Align with border */
+  left: 50%;
+  width: 15%; /* Width of the gap */
+  height: calc(100% + 2px); /* Cover border height */
+  background-color: var(--base-bg-color); /* Match container background to create gap */
+  transform: translateX(-50%);
+  animation: scan-rotate 10s linear infinite;
+  filter: drop-shadow(0 0 5px var(--base-bg-color));
+}
+
+@keyframes scan-rotate {
+  from { transform: translateX(-50%) rotate(0deg); }
+  to { transform: translate(-50%) rotate(360deg); }
+}
+
+.ring-inner-glow-ring {
+  border: var(--line-thickness) solid rgba(var(--base-accent-color), 0.1);
+  box-shadow: inset 0 0 calc(5px + var(--audio-level, 0) * 10px) rgba(var(--base-accent-color), var(--glow-opacity, 0.8)),
+              0 0 calc(5px + var(--audio-level, 0) * 8px) rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.5));
+}
+
+.ring-core-pulse {
+  background-color: rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.5) * 0.7));
+  transform: translate(-50%, -50%) scale(var(--pulse-scale, 1));
+  border: none;
+  animation-name: pulse, rotate; /* Combine pulse and rotate */
+  animation-duration: 2s, 10s; /* Pulse duration, rotate duration */
+  animation-timing-function: ease-in-out, linear;
+  box-shadow: 0 0 calc(10px + var(--audio-level, 0) * 20px) rgba(var(--base-accent-color), var(--glow-opacity, 0.9)),
+              inset 0 0 calc(8px + var(--audio-level, 0) * 15px) rgba(var(--base-accent-color), var(--glow-opacity, 0.7));
+}
+
+@keyframes pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(calc(var(--pulse-scale,1) * 0.8)); opacity: calc(var(--glow-opacity, 0.5) * 0.7); }
+  50% { transform: translate(-50%, -50%) scale(var(--pulse-scale,1)); opacity: var(--glow-opacity, 0.9); }
+}
+
+
+/* Hexagonal Patterns */
+.hex-pattern-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    pointer-events: none; /* Don't interfere with mouse */
+}
+
+.hexagon {
+    position: absolute;
+    width: calc(15px + var(--audio-level, 0) * 10px); 
+    height: calc(18px + var(--audio-level, 0) * 12px);
+    background-color: rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.3) * 0.3) );
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    opacity: calc(0.1 + var(--audio-level, 0) * 0.4);
+    animation: fadeInOut 3s infinite alternate ease-in-out;
+    filter: drop-shadow(0 0 3px rgba(var(--base-accent-color), calc(var(--glow-opacity, 0.3) * 0.5)));
+}
+
+@keyframes fadeInOut {
+    from { opacity: calc(0.1 + var(--audio-level, 0) * 0.2); transform: scale(0.9); }
+    to { opacity: calc(0.3 + var(--audio-level, 0) * 0.5); transform: scale(1.1); }
+}
+
+/* Chevron Accents */
+.chevron-group {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    opacity: calc(0.4 + var(--audio-level, 0) * 0.6);
+    filter: drop-shadow(0 0 5px rgba(var(--base-accent-color), var(--glow-opacity, 0.7)));
+}
+
+.chevron-group.top-left {
+    top: 5%;
+    left: 5%;
+}
+
+.chevron-group.bottom-right {
+    bottom: 5%;
+    right: 5%;
+    transform: rotate(180deg); /* Point them inwards or appropriately */
+}
+
+.chevron {
+    width: 20px;
+    height: 5px; /* Thickness of chevron arm */
+    background-color: rgba(var(--base-accent-color), var(--glow-opacity, 0.8));
+    margin-bottom: 4px;
+    position: relative;
+    animation: chevronPulse 1.5s infinite alternate ease-in-out;
+    animation-delay: calc(var(--index, 0) * 0.2s); /* Stagger if needed, though this won't work directly here */
+}
+
+.chevron::before, .chevron::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    top: 0;
+}
+
+/* Simple chevrons, could be improved with clip-path or more elements for exact shape */
+.chevron::before {
+    left: -5px; /* Adjust for angle */
+    border-width: 2.5px 0 2.5px 5px; /* Triangle pointing left */
+    border-color: transparent transparent transparent rgba(var(--base-accent-color), var(--glow-opacity, 0.8));
+}
+.chevron::after {
+    right: -5px; /* Adjust for angle */
+    border-width: 2.5px 5px 2.5px 0; /* Triangle pointing right */
+    border-color: transparent rgba(var(--base-accent-color), var(--glow-opacity, 0.8)) transparent transparent;
+}
+
+.top-left .chevron {
+    transform: rotate(45deg); margin: 2px;
+}
+.bottom-right .chevron {
+     transform: rotate(45deg); margin: 2px;
+}
+
+@keyframes chevronPulse {
+    from { opacity: calc(0.5 * var(--glow-opacity, 0.8)); transform: scale(0.95);}
+    to { opacity: var(--glow-opacity, 0.8); transform: scale(1.05);}
+}
+
+/* This provides the dynamic color based on --accent-intensity for glowing elements */
+.ring-layer, .radial-line, .hexagon, .chevron {
+    border-color: rgba(var(--base-accent-color), calc(var(--glow-opacity,0.5) * clamp(0.3, var(--audio-level, 0) + 0.3, 1)));
+    background-color: rgba(var(--base-accent-color), calc(var(--glow-opacity,0.3) * clamp(0.1, var(--audio-level, 0) * 0.5, 0.5)));
+    /* Re-apply for specific cases if border is used more directly */
+}
+
+/* Ensure more specific rules override the general one above as needed */
+.ring-solid {
+  border: var(--line-thickness) solid rgba(var(--base-accent-color), calc(var(--glow-opacity,0.5) * 0.8 * (0.5 + var(--audio-level, 0)*0.5) ));
+}
+.ring-thick-solid {
+  border: calc(var(--line-thickness) * 2.5) solid rgba(var(--base-accent-color), calc(var(--glow-opacity,0.5) * 0.9 * (0.6 + var(--audio-level, 0)*0.4) ));
+}
+.ring-dashed {
+  border: var(--line-thickness) dashed rgba(var(--base-accent-color), calc(var(--glow-opacity,0.5) * 0.7 * (0.5 + var(--audio-level, 0)*0.5) ));
+}
+.ring-fine-dotted {
+  border: var(--thin-line-thickness) dotted rgba(var(--base-accent-color), calc(var(--glow-opacity,0.5) * 0.6 * (0.4 + var(--audio-level, 0)*0.6) ));
+}
+.ring-core-pulse {
+  background-color: rgba(var(--base-accent-color), calc(var(--glow-opacity,0.5) * 0.7 * (0.7 + var(--audio-level, 0)*0.3) ));
+}
+
+/* FuturisticAnimation.css (SVG Version) */
+.futuristic-svg-animation {
+  width: 100%;
+  height: 100%;
+  min-height: 400px; /* Or match App.tsx animation-container height */
+  display: block; /* SVG default */
+  /* CSS variables for audio reactivity, set by the component */
+  /* --audio-level: 0; */
+  /* --main-glow-opacity: 0.4; */
+  /* --line-intensity: 0.3; */
+}
+
+.svg-bg-fill {
+  fill: #050a14; /* Very dark blue/black, matching old CSS */
+}
+
+.svg-main-frame {
+  fill: none;
+  stroke: rgba(0, 255, 255, var(--main-glow-opacity, 0.6)); /* Cyan with audio reactive opacity */
+  stroke-width: 3px; /* Adjust as needed */
+  filter: url(#svgGlow); /* Apply SVG glow filter */
+  /* For additional CSS glow if SVG filter is not enough/preferred */
+  /* filter: drop-shadow(0 0 5px rgba(0, 255, 255, var(--main-glow-opacity, 0.6))) 
+           drop-shadow(0 0 10px rgba(0, 255, 255, calc(var(--main-glow-opacity, 0.6) * 0.5))); */
+}
+
+.orbital-lines-group {
+  /* Base animation for the group, e.g., slow rotation or pulsing */
+  /* animation: subtleGroupPulse 10s infinite alternate ease-in-out; */
+}
+
+.orbital-line {
+  fill: none;
+  stroke: rgba(0, 220, 255, var(--line-intensity, 0.5)); /* Slightly less intense cyan variant */
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: var(--line-intensity, 0.5); 
+  transition: opacity 0.2s ease-in-out, stroke 0.2s ease-in-out; 
+  /* filter: url(#svgGlow); */ /* Can apply glow to lines too, but might be too much */
+}
+
+.orbital-line.dotted-line {
+    stroke-dasharray: 1, 4; /* Small dot, larger gap */
+    stroke-width: 1px;
+}
+
+/* Individual line animations - example: make them appear to draw or move */
+.orbital-line.line-1 {
+  animation: sweepAnimation1 15s infinite linear alternate;
+}
+
+.orbital-line.line-2 {
+  animation: sweepAnimation2 20s infinite linear alternate-reverse;
+  stroke: rgba(0, 200, 230, var(--line-intensity, 0.4));
+}
+
+.orbital-line.line-3 {
+  animation: sweepAnimation3 12s infinite linear;
+  stroke: rgba(0, 180, 210, var(--line-intensity, 0.3));
+}
+
+.orbital-line.line-4 {
+    stroke: rgba(0, 220, 255, calc(var(--line-intensity, 0.4) * 0.7) );
+    animation: dashOffsetAnimation 5s infinite linear;
+}
+
+@keyframes sweepAnimation1 {
+  0% { stroke-dasharray: 0, 1000; stroke-opacity: calc(var(--line-intensity, 0.3) * 0.5);}
+  50% { stroke-dasharray: 500, 500; stroke-opacity: var(--line-intensity, 0.6); }
+  100% { stroke-dasharray: 1000, 0; stroke-opacity: calc(var(--line-intensity, 0.3) * 0.5);}
+}
+
+@keyframes sweepAnimation2 {
+  0% { transform: rotate(0deg); opacity: var(--line-intensity, 0.5); }
+  100% { transform: rotate(20deg); opacity: calc(var(--line-intensity, 0.5) * 0.5); }
+}
+
+@keyframes sweepAnimation3 {
+  from { transform: translateX(-5px); }
+  to { transform: translateX(5px); }
+}
+
+@keyframes dashOffsetAnimation {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: 20; } /* Adjust based on dasharray sum for smooth loop */
+}
+
+
+.subtle-bg-elements .bg-dot {
+  fill: rgba(0, 255, 255, calc(var(--line-intensity, 0.3) * 0.3) );
+  opacity: calc(0.1 + var(--audio-level, 0) * 0.4); 
+  animation: bgDotPulse 5s infinite alternate ease-in-out;
+  animation-delay: calc(var(--i, 0) * 0.1s); /* Needs --i to be set on element for stagger */
+}
+
+@keyframes bgDotPulse {
+  0% { r: 0.3; opacity: calc(var(--line-intensity, 0.3) * 0.2); }
+  50% { r: 0.7; opacity: calc(var(--line-intensity, 0.3) * 0.5); }
+  100% { r: 0.3; opacity: calc(var(--line-intensity, 0.3) * 0.2); }
+}
+
+.subtle-center-pulse {
+    fill: rgba(0,255,255, calc(var(--line-intensity, 0.2) * 0.5));
+    stroke: rgba(0,255,255, var(--line-intensity, 0.3));
+    stroke-width: 1px;
+    opacity: calc(0.3 + var(--audio-level,0) * 0.7);
+    transform-origin: center center;
+    animation: centerPulseAnim 2s infinite ease-in-out;
+    filter: drop-shadow(0 0 3px rgba(0, 255, 255, calc(var(--line-intensity,0.3)*0.8)));
+}
+
+@keyframes centerPulseAnim {
+    0%, 100% { transform: scale(0.9); opacity: calc(var(--line-intensity,0.3) * 0.7); }
+    50% { transform: scale(1.1); opacity: var(--line-intensity,0.3); }
+}
+
+.subtle-bar-shape {
+    fill: rgba(0,255,255, calc(var(--line-intensity, 0.15) * 0.4));
+    stroke: rgba(0,255,255, calc(var(--line-intensity, 0.2) * 0.7) );
+    stroke-width: 0.5px;
+    opacity: calc(0.2 + var(--audio-level,0) * 0.5);
+    filter: drop-shadow(0 0 2px rgba(0, 255, 255, calc(var(--line-intensity,0.2)*0.5)));
+}
+
+/* Ensure that the .animation-container-2d class from the old CSS is removed or doesn't conflict */
+/* If the old .animation-container-2d styles are still present, they might override or interfere. */ 

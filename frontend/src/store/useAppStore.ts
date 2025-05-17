@@ -17,12 +17,20 @@ export interface TtsVoice {
 // Typically an integer from 0 (least aggressive) to 3 (most aggressive)
 export type VadAggressivenessLevel = 0 | 1 | 2 | 3;
 
+// Define ChatMessage interface
+export interface ChatMessage {
+  id: string; // Unique ID for the message (e.g., timestamp + random)
+  type: 'user' | 'assistant' | 'tool_status';
+  content: string;
+  timestamp: number; // Unix timestamp
+}
+
 interface AppState {
   isRecording: boolean;
   partialTranscript: string;
-  finalTranscript: string;
-  llmResponse: string;
-  toolStatus: string;
+  chatMessages: ChatMessage[]; // NEW: Array to store all chat messages
+  currentAssistantMessageId: string | null; // NEW: To track active assistant message for streaming
+
   isPlayingAudio: boolean;
   currentAudioUrl: string | null; // For TTS audio playback
   audioPlaybackError: string | null;
@@ -56,12 +64,6 @@ interface AppState {
   // Actions
   setIsRecording: (isRecording: boolean) => void;
   setPartialTranscript: (partial: string) => void;
-  appendPartialTranscript: (partial: string) => void;
-  setFinalTranscript: (final: string) => void;
-  appendFinalTranscript: (final: string) => void;
-  setLlmResponse: (response: string) => void;
-  appendLlmResponse: (token: string) => void;
-  setToolStatus: (status: string) => void;
   setIsPlayingAudio: (isPlaying: boolean) => void;
   setCurrentAudioUrl: (url: string | null) => void;
   setAudioPlaybackError: (error: string | null) => void;
@@ -86,6 +88,13 @@ interface AppState {
   resetAudioPlaybackProgress: () => void;
 
   setActiveConversationId: (id: string | null) => void; // ADDED
+
+  // NEW Chat Actions
+  addChatMessage: (data: { type: 'user' | 'tool_status'; content: string }) => void;
+  startAssistantMessage: (initialContent?: string) => void;
+  appendContentToCurrentAssistantMessage: (contentChunk: string) => void;
+  clearCurrentAssistantMessageId: () => void;
+  clearChat: () => void;
 }
 
 // Hardcoded default voices
@@ -109,9 +118,9 @@ const defaultLlmEndpoint: string = "http://localhost:11434/api/chat"; // Example
 const useAppStore = create<AppState>((set, get) => ({
   isRecording: false,
   partialTranscript: "",
-  finalTranscript: "",
-  llmResponse: "",
-  toolStatus: "",
+  chatMessages: [], // NEW
+  currentAssistantMessageId: null, // NEW
+
   isPlayingAudio: false,
   currentAudioUrl: null,
   audioPlaybackError: null,
@@ -133,12 +142,6 @@ const useAppStore = create<AppState>((set, get) => ({
 
   setIsRecording: (isRecording) => set({ isRecording }),
   setPartialTranscript: (partial) => set({ partialTranscript: partial }),
-  appendPartialTranscript: (partial) => set((state) => ({ partialTranscript: state.partialTranscript + partial })),
-  setFinalTranscript: (final) => set({ finalTranscript: final }),
-  appendFinalTranscript: (final) => set((state) => ({ finalTranscript: state.finalTranscript + final, partialTranscript: "" })), 
-  setLlmResponse: (response) => set({ llmResponse: response }),
-  appendLlmResponse: (token) => set((state) => ({ llmResponse: state.llmResponse + token })),
-  setToolStatus: (status) => set({ toolStatus: status }),
   setIsPlayingAudio: (isPlaying) => set({ isPlayingAudio: isPlaying }),
   setCurrentAudioUrl: (url) => set({ currentAudioUrl: url, audioPlaybackError: null }), 
   setAudioPlaybackError: (error) => set({ audioPlaybackError: error, isPlayingAudio: false }),
@@ -164,6 +167,80 @@ const useAppStore = create<AppState>((set, get) => ({
   resetAudioPlaybackProgress: () => set({ audioCurrentTime: 0, audioDuration: 0, isPlayingAudio: false, currentAudioUrl: null }), // Also stop playback
 
   setActiveConversationId: (id) => set({ activeConversationId: id }), // ADDED
+
+  // NEW Chat Actions Implementation
+  addChatMessage: (data) => {
+    const trimmedContent = data.content.trim();
+    if (!trimmedContent) {
+      // If content is empty or only whitespace, do not add the message
+      // Also, if it was a user message, still clear the partial transcript
+      if (data.type === 'user') {
+        set({ partialTranscript: "" });
+      }
+      return;
+    }
+    const newMessage: ChatMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      type: data.type,
+      content: trimmedContent, // Use trimmed content
+      timestamp: Date.now(),
+    };
+    set((state) => ({ 
+      chatMessages: [...state.chatMessages, newMessage],
+      partialTranscript: data.type === 'user' ? "" : state.partialTranscript 
+    }));
+  },
+  startAssistantMessage: (initialContent = "") => {
+    const newMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const newMessage: ChatMessage = {
+      id: newMessageId,
+      type: 'assistant',
+      content: initialContent, // Start with potentially empty or whitespace initial content, will be trimmed upon finalization
+      timestamp: Date.now(),
+    };
+    set((state) => ({
+      chatMessages: [...state.chatMessages, newMessage],
+      currentAssistantMessageId: newMessageId,
+    }));
+  },
+  appendContentToCurrentAssistantMessage: (contentChunk) => {
+    set((state) => {
+      if (!state.currentAssistantMessageId) return state;
+      return {
+        chatMessages: state.chatMessages.map((msg) =>
+          msg.id === state.currentAssistantMessageId
+            ? { ...msg, content: msg.content + contentChunk }
+            : msg
+        ),
+      };
+    });
+  },
+  clearCurrentAssistantMessageId: () => {
+    const endedAssistantMessageId = get().currentAssistantMessageId;
+    set((state) => {
+      if (!endedAssistantMessageId) {
+        return { currentAssistantMessageId: null };
+      }
+      // Check the content of the assistant message that just ended
+      const updatedChatMessages = state.chatMessages.filter(msg => {
+        if (msg.id === endedAssistantMessageId) {
+          return msg.content.trim() !== ''; // Keep if not empty after trim
+        }
+        return true; // Keep other messages
+      });
+      return {
+        chatMessages: updatedChatMessages,
+        currentAssistantMessageId: null,
+      };
+    });
+  },
+  clearChat: () => set({ 
+    chatMessages: [], 
+    partialTranscript: "", 
+    currentAssistantMessageId: null,
+    // Also consider resetting other related states if necessary
+    // toolStatus: "" // If you had a separate toolStatus outside messages
+  }),
 }));
 
 export default useAppStore; 
