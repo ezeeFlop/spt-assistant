@@ -13,7 +13,7 @@ Tara is a sophisticated, real-time, French-first voice assistant designed for se
 ## Core Features
 
 *   **Real-time Voice Interaction**: Experience low-latency, two-way spoken conversations.
-*   **Local-First Processing**: Prioritizes on-device VAD (Silero), STT (faster-whisper), and TTS (Piper), promoting privacy and enabling offline functionality. LLM can be configured to run locally or remotely.
+*   **Local-First Processing**: Prioritizes on-device VAD (Silero), STT (faster-whisper), and TTS (Piper, Coqui TTS), promoting privacy and enabling offline functionality. LLM can be configured to run locally or remotely.
 *   **Intelligent Barge-in**: Allows users to interrupt the assistant naturally during its speech, creating a more fluid conversational experience.
 *   **Sentence-by-Sentence TTS**: Delivers audio feedback more immediately and naturally as the assistant formulates its response.
 *   **Futuristic & Reactive UI**: A modern web interface built with React, featuring:
@@ -44,10 +44,11 @@ Tara is a sophisticated, real-time, French-first voice assistant designed for se
 **Audio Processing:**
 *   Voice Activity Detection (VAD): Silero VAD
 *   Speech-to-Text (STT): faster-whisper
-*   Text-to-Speech (TTS): Piper TTS
+*   Text-to-Speech (TTS): Piper TTS, Coqui TTS (alternative)
 
 **Language Model (LLM):**
-*   Configurable: Supports OpenAI models by default, adaptable for other providers or local models (e.g., via Ollama, LM Studio).
+*   Utilizes **LiteLLM** to support a wide range of LLM providers.
+*   Configurable: Supports OpenAI models by default, easily adaptable for other providers (e.g., Anthropic, Cohere) or local models (e.g., via Ollama, LM Studio) through LiteLLM.
 
 **Package Management & Workflow:**
 *   UV (Python package installer, resolver, and virtual environment manager)
@@ -70,12 +71,19 @@ Each backend service operates independently and communicates via Redis pub/sub c
 *   [UV](https://github.com/astral-sh/uv) (Python package manager, install with `pip install uv`)
 *   A running Redis server.
 *   **For TTS Service (`tts_worker`)**:
-    *   Piper TTS executable.
-    *   Piper voice models.
-    *   Download these and configure their paths in `tts_worker/.env`.
+    *   **If using Piper TTS**:
+        *   Piper TTS executable.
+        *   Piper voice models.
+        *   Download these and configure their paths in `tts_worker/.env`.
+    *   **If using Coqui TTS**:
+        *   A running Coqui TTS server instance.
+        *   The `tts_worker` will need to be configured with the Coqui TTS server URL.
 *   **For VAD/STT Worker (`vad_stt_worker`)**:
     *   STT models for faster-whisper will be downloaded on the first run if not already cached in the default Hugging Face cache location.
 *   **(Optional) LLM API Key**: If using a remote LLM provider like OpenAI, you'll need an API key.
+*   **(Optional) Local LLM Setup (Ollama)**:
+    *   Install [Ollama](https://ollama.com/).
+    *   Pull a desired model, e.g., `ollama pull llama3.1` or `ollama pull mistral`.
 
 ## Setup and Configuration
 
@@ -128,19 +136,45 @@ Each backend service operates independently and communicates via Redis pub/sub c
     *   **`llm_orchestrator_worker/.env` (additional settings)**:
         ```env
         LLM_PROVIDER="openai" # Example: "openai", "ollama", "custom_openai_compatible"
-        LLM_MODEL_NAME="gpt-3.5-turbo" # Example: "gpt-4", "llama3", "mistral"
-        LLM_API_KEY="sk-YOUR_OPENAI_API_KEY" # Replace with your actual LLM API key if using OpenAI or similar
-        # LLM_BASE_URL="http://localhost:11434/v1" # Example for local Ollama OpenAI-compatible endpoint
+        LLM_MODEL_NAME="gpt-3.5-turbo" # Example: "gpt-4", "llama3.1", "mistral" (for Ollama, use model name as pulled)
+        LLM_API_KEY="sk-YOUR_OPENAI_API_KEY" # Required for OpenAI. For Ollama, can be a placeholder like "ollama" or empty if not needed.
+        # LLM_BASE_URL="http://localhost:11434/v1" # For Ollama OpenAI-compatible endpoint. Uncomment and use if LLM_PROVIDER="ollama".
+                                                 # For other custom OpenAI compatible endpoints.
         # DEFAULT_TTS_VOICE_ID="fr_FR-siwis-medium.onnx" # Default voice ID for TTS requests if not specified elsewhere
         SYSTEM_PROMPT="You are Tara, a helpful and concise voice assistant. Respond in French unless the user speaks in another language."
         ```
+        **Using Ollama as a Local LLM Provider:**
+        1.  Ensure Ollama is installed and running.
+        2.  Pull a model: `ollama pull llama3.1` (or any other model you wish to use, e.g., `mistral`).
+        3.  In `llm_orchestrator_worker/.env`, set:
+            ```env
+            LLM_PROVIDER="ollama"
+            LLM_MODEL_NAME="llama3.1" # Or the name of the model you pulled with Ollama
+            LLM_BASE_URL="http://localhost:11434/v1" # Default Ollama OpenAI-compatible API endpoint
+            LLM_API_KEY="ollama" # LiteLLM requires an API key; "ollama" is a common placeholder for local Ollama.
+            ```
 
     *   **`tts_worker/.env` (additional settings)**:
         ```env
-        PIPER_EXECUTABLE_PATH="/path/to/your/piper/executable" # IMPORTANT: Absolute path to the Piper executable
-        PIPER_VOICES_DIR="/path/to/your/piper_voices/"        # IMPORTANT: Absolute path to the directory containing Piper voice model files (.onnx and .json)
-        # DEFAULT_PIPER_VOICE_MODEL="fr_FR-siwis-medium.onnx" # Default voice model file name (must be in PIPER_VOICES_DIR)
-        # PIPER_VOICE_NATIVE_SAMPLE_RATE=22050 # Sample rate of your Piper voice model (check model's .json config)
+        TTS_PROVIDER="piper" # "piper" or "coqui"
+
+        # --- Piper TTS Settings (if TTS_PROVIDER="piper") ---
+        PIPER__EXECUTABLE_PATH="/path/to/your/piper/executable" # IMPORTANT: Absolute path to the Piper executable
+        PIPER__VOICES_DIR="/path/to/your/piper_voices/"        # IMPORTANT: Absolute path to the directory containing Piper voice model files (.onnx and .json)
+        # PIPER__DEFAULT_VOICE_MODEL="fr_FR-siwis-medium.onnx" # Default voice model file name (must be in PIPER__VOICES_DIR)
+        # PIPER__NATIVE_SAMPLE_RATE=22050 # Sample rate of your Piper voice model (check model's .json config)
+        
+        # --- Coqui TTS Settings (if TTS_PROVIDER="coqui") ---
+        # Note the double underscore for nested settings if CoquiSettings were more complex
+        # and used nested Pydantic models themselves. Current CoquiSettings are flat.
+        # COQUI__SERVER_URL="http://localhost:5002" # URL of your running Coqui TTS server (example)
+        COQUI__DEFAULT_MODEL_NAME="tts_models/fr/fairseq/vits" # Example model, if configurable via API calls.
+                                                         # Often, Coqui server manages models, worker just requests.
+        # COQUI__DEFAULT_LANGUAGE="fr"
+        # COQUI__NATIVE_SAMPLE_RATE=24000
+        # COQUI__SPEAKER_ID="" # Specify if your Coqui model/server supports/requires it.
+
+        # --- Common Audio Settings ---
         # AUDIO_OUTPUT_SAMPLE_RATE=24000 # Target output sample rate for client (resampling will occur if different)
         ```
 

@@ -4,11 +4,12 @@ import json
 import redis.asyncio as redis
 from typing import Dict, Optional, Tuple, Any, Coroutine
 
-from tts_worker.config import tts_settings # Standalone service config
-from tts_worker.logging_config import get_logger # Updated logger import
-from tts_worker.core.tts_abc import AbstractTTSService # Updated ABC import
-from tts_worker.providers.piper_tts_service import PiperTTSService # Updated Piper import
-from tts_worker.providers.elevenlabs_tts_service import ElevenLabsTTSService # Updated ElevenLabs import
+from tts_worker.config import tts_settings
+from tts_worker.logging_config import get_logger 
+from tts_worker.core.tts_abc import AbstractTTSService
+from tts_worker.providers.piper_tts_service import PiperTTSService
+from tts_worker.providers.elevenlabs_tts_service import ElevenLabsTTSService 
+from tts_worker.providers.coqui_tts_service import CoquiTTSService
 
 logger = get_logger(__name__)
 
@@ -42,6 +43,15 @@ def get_tts_service_instance() -> AbstractTTSService:
         service_instance = ElevenLabsTTSService(
             api_key=tts_settings.elevenlabs.API_KEY,
             default_voice_id=tts_settings.elevenlabs.DEFAULT_VOICE_ID,
+            target_sample_rate=tts_settings.AUDIO_OUTPUT_SAMPLE_RATE
+        )
+        return service_instance
+    elif tts_settings.TTS_PROVIDER == "coqui":
+        logger.info(f"Initializing CoquiTTS service with settings: {tts_settings.coqui.model_dump()}")
+        service_instance = CoquiTTSService(
+            default_model_name=tts_settings.coqui.DEFAULT_MODEL_NAME,
+            default_language=tts_settings.coqui.DEFAULT_LANGUAGE,
+            native_sample_rate=tts_settings.coqui.NATIVE_SAMPLE_RATE,
             target_sample_rate=tts_settings.AUDIO_OUTPUT_SAMPLE_RATE
         )
         return service_instance

@@ -22,19 +22,20 @@ class OrchestratorSettings(BaseSettings):
     CONVERSATION_DATA_TTL_SECONDS: int = 24 * 60 * 60 # TTL for conversation data in Redis (e.g., 1 day)
 
     # LLM Settings (FR-05)
-    LLM_PROVIDER: str = "openai" # e.g., "openai", "anthropic", "ollama_http"
+    LLM_PROVIDER: str = "ollama" # e.g., "openai", "anthropic", "ollama"
     LLM_API_KEY: Optional[str] = "your_openai_api_key_here" # Keep sensitive keys out of code
-    LLM_MODEL_NAME: str = "gpt-3.5-turbo" # Default model
-    LLM_BASE_URL: Optional[str] = None # For self-hosted LLMs like Ollama or VLLM
-    LLM_MAX_TOKENS: int = 200
+    LLM_MODEL_NAME: str = "gemma3" # Default model
+    LLM_BASE_URL: Optional[str] = "http://localhost:11434" # For self-hosted LLMs like Ollama or VLLM
+    LLM_MAX_TOKENS: int = 1000
+    
     LLM_TEMPERATURE: float = 0.7
     # Define a default conversation history length
     MAX_CONVERSATION_HISTORY: int = 10 # Number of turns (user + assistant) to keep
     SYSTEM_PROMPT: str = "You are a helpful French voice assistant, your name is TARA. Make sure to NEVER generate MARKDOWN or HTML code in your responses."
 
     # Default TTS voice if not specified in conversation config (should match a key from tts_service)
-    DEFAULT_TTS_VOICE_ID: Optional[str] = "fr_FR-siwis-medium.onnx" # Example default
-
+    #DEFAULT_TTS_VOICE_ID: Optional[str] = "fr_FR-siwis-medium.onnx" # Example default
+    DEFAULT_TTS_VOICE_ID: Optional[str] = "Claribel Dervla" # Example default
     # Tool Settings (FR-06) - Placeholder for MCP client config
     MCP_CLIENT_CONFIG_PATH: Optional[str] = None 
 

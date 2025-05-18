@@ -351,6 +351,14 @@ async def main_async_orchestrator():
     signal.signal(signal.SIGINT, signal_handler_orchestrator)
     signal.signal(signal.SIGTERM, signal_handler_orchestrator)
     logger.info("Starting LLM Orchestrator...")
+    logger.info(f"LLM provider: {orchestrator_settings.LLM_PROVIDER}")
+    logger.info(f"LLM model: {orchestrator_settings.LLM_MODEL_NAME}")
+    logger.info(f"LLM base URL: {orchestrator_settings.LLM_BASE_URL}")
+    logger.info(f"LLM max tokens: {orchestrator_settings.LLM_MAX_TOKENS}")
+    logger.info(f"LLM temperature: {orchestrator_settings.LLM_TEMPERATURE}")
+    logger.info(f"LLM max conversation history: {orchestrator_settings.MAX_CONVERSATION_HISTORY}")
+    logger.info(f"LLM system prompt: {orchestrator_settings.SYSTEM_PROMPT}")
+    logger.info(f"LLM default TTS voice ID: {orchestrator_settings.DEFAULT_TTS_VOICE_ID}")
     redis_client = None
     transcript_subscriber_task = None # Added for tracking
     barge_in_subscriber_task = None # Added for tracking

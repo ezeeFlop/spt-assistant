@@ -109,6 +109,9 @@ const defaultTtsVoices: TtsVoice[] = [
   { id: 'fr_FR-siwis-medium.onnx', name: 'Piper - Siwis (FR)', engine: 'piper', language: 'fr' },
   { id: 'fr_FR-gilles-high.onnx', name: 'Piper - Gilles (FR)', engine: 'piper', language: 'fr' },
   // Add more actual ElevenLabs voice IDs here as needed
+  { id: 'tts_models/multilingual/multi-dataset/xtts_v2', name: 'Coqui - XTTS (FR)', engine: 'coqui', language: 'fr' },
+  { id: 'tts_models/multilingual/multi-dataset/xtts_v2', name: 'Coqui - XTTS (EN)', engine: 'coqui', language: 'en' },
+  { id: 'tts_models/multilingual/multi-dataset/xtts_v2', name: 'Coqui - XTTS (DE)', engine: 'coqui', language: 'de' },
 ];
 
 // Default values for new settings

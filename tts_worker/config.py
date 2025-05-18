@@ -20,10 +20,16 @@ class ElevenLabsSettings(BaseSettings):
     # XI_API_BASE_URL: str = "https://api.elevenlabs.io/v1"
     model_config = SettingsConfigDict(env_prefix='ELEVENLABS_')
 
+class CoquiSettings(BaseSettings):
+    DEFAULT_MODEL_NAME: str = "tts_models/multilingual/multi-dataset/xtts_v2"
+    DEFAULT_LANGUAGE: str = "fr"
+    NATIVE_SAMPLE_RATE: int = 24000
+    model_config = SettingsConfigDict(env_prefix='COQUI_')
+
 class TTSServiceSettings(BaseSettings):
     # Service Operation
     LOG_LEVEL: str = "INFO"
-    TTS_PROVIDER: Literal["piper", "elevenlabs"] = "piper"
+    TTS_PROVIDER: Literal["piper", "elevenlabs", "coqui"] = "coqui"
 
     # Redis settings (for communication, not for the main app's Redis use)
     REDIS_HOST: str = "localhost"
@@ -49,7 +55,7 @@ class TTSServiceSettings(BaseSettings):
     # Provider-specific settings
     piper: PiperSettings = PiperSettings()
     elevenlabs: ElevenLabsSettings = ElevenLabsSettings()
-
+    coqui: CoquiSettings = CoquiSettings()
     model_config = SettingsConfigDict(
         env_file= str(SERVICE_ROOT / ".env"), # Expects .env in tts_service/ directory
         extra="ignore",
