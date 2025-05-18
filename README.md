@@ -12,8 +12,8 @@ Tara is a sophisticated, real-time, French-first voice assistant designed for se
 
 ## Core Features
 
-*   **Real-time Voice Interaction**: Experience low-latency, two-way spoken conversations.
-*   **Local-First Processing**: Prioritizes on-device VAD (Silero), STT (faster-whisper), and TTS (Piper, Coqui TTS), promoting privacy and enabling offline functionality. LLM can be configured to run locally or remotely.
+*   **Real-time Voice Interaction**: Experience low-latency, two-way spoken conversations (requires CUDA and GPU, runs on CPU and MPS with more latency).
+*   **Local-First Processing**: Prioritizes on-device VAD (Silero), STT (faster-whisper and whisperx), and TTS (Piper, Coqui TTS and Elevenlab), promoting privacy and enabling offline functionality. LLM can be configured to run locally or remotely.
 *   **Intelligent Barge-in**: Allows users to interrupt the assistant naturally during its speech, creating a more fluid conversational experience.
 *   **Sentence-by-Sentence TTS**: Delivers audio feedback more immediately and naturally as the assistant formulates its response.
 *   **Futuristic & Reactive UI**: A modern web interface built with React, featuring:
@@ -53,6 +53,25 @@ Tara is a sophisticated, real-time, French-first voice assistant designed for se
 **Package Management & Workflow:**
 *   UV (Python package installer, resolver, and virtual environment manager)
 
+## System Architecture
+
+```
+Browser (Vite + React  TS) ──WS──▶  Gateway (FastAPI) ─▶  VAD & STT Service (Whisper)
+                                           │
+                                           ├─▶  LLM Orchestrator ──▶ LLM API
+                                           │            ▲
+                                           │            └─ Tool Router (MCP client)
+                                           │
+                                           └─▶  TTS Service (Piper)
+                                                    ▲
+Browser ◀── Audio Stream (Opus/PCM) ◀───────────────┘
+```
+
+* **FastAPI Gateway**: accepts WebSocket streams, pushes PCM to Redis pub/sub.
+* **VAD & STT**: Python worker using Silero VAD + faster‑whisper; publishes partial/final transcripts.
+* **LLM Orchestrator**: consumes transcript events, manages dialog state, tool calls, and TTS requests.
+* **TTS Service**: Piper/Coqui/Elevenlab server with phoneme cache; returns 24‑kHz WAV frames for immediate playback.
+
 ## Project Structure
 
 The project is organized into a frontend application and several backend microservices:
@@ -60,8 +79,8 @@ The project is organized into a frontend application and several backend microse
 *   **`frontend/`**: Contains the React-based web interface for user interaction.
 *   **`app/`**: The main FastAPI Gateway. Handles WebSocket connections, authentication (JWT), and routes messages between the client and other backend services via Redis.
 *   **`vad_stt_worker/`**: VAD and STT worker. Consumes raw audio, performs VAD with Silero, and STT with faster-whisper.
-*   **`llm_orchestrator_worker/`**: LLM Orchestrator. Manages conversation state, interacts with the chosen Language Model, handles tool calls, and requests TTS generation.
-*   **`tts_worker/`**: Text-to-Speech (TTS) worker. Synthesizes speech from text using Piper TTS.
+*   **`llm_orchestrator_worker/`**: LLM Orchestrator. Manages conversation state, interacts with the chosen Language Model, handles tool calls, and requests TTS generation using LiteLLM.
+*   **`tts_worker/`**: Text-to-Speech (TTS) worker. Synthesizes speech from text using Piper, Coqui and Elevenlab TTS.
 
 Each backend service operates independently and communicates via Redis pub/sub channels.
 
@@ -76,21 +95,21 @@ Each backend service operates independently and communicates via Redis pub/sub c
         *   Piper voice models.
         *   Download these and configure their paths in `tts_worker/.env`.
     *   **If using Coqui TTS**:
-        *   A running Coqui TTS server instance.
-        *   The `tts_worker` will need to be configured with the Coqui TTS server URL.
+        *   Coqui voice models
 *   **For VAD/STT Worker (`vad_stt_worker`)**:
-    *   STT models for faster-whisper will be downloaded on the first run if not already cached in the default Hugging Face cache location.
+    *   STT models for faster-whisper and whisperx (on CUDA) will be downloaded on the first run if not already cached in the default Hugging Face cache location.
 *   **(Optional) LLM API Key**: If using a remote LLM provider like OpenAI, you'll need an API key.
 *   **(Optional) Local LLM Setup (Ollama)**:
     *   Install [Ollama](https://ollama.com/).
-    *   Pull a desired model, e.g., `ollama pull llama3.1` or `ollama pull mistral`.
+    *   The models are pulled automatically
 
 ## Setup and Configuration
 
 1.  **Clone the Repository:**
+    [spt-assistant Repository](https://github.com/ezeeFlop/spt-assistant)
     ```bash
-    git clone <repository_url> # Replace with your repository URL
-    cd tara-voice-assistant # Or your repository name
+    git clone https://github.com/ezeeFlop/spt-assistant
+    cd spt-assistant # Or your repository name
     ```
 
 2.  **Environment Configuration:**
@@ -313,7 +332,5 @@ app/
 └── utils/
 pyproject.toml
 README.md
-# .env (you create this)
-# .env.example (you create this)
 ```
 

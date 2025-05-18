@@ -27,6 +27,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
       # - LOG_LEVEL=INFO # Example, if your app uses this
     deploy:
       replicas: 1 # Or more for scalability
@@ -50,6 +51,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - STT_MODEL_NAME=${STT_MODEL_NAME}
       # - STT_DEVICE=cpu # Ensure this aligns with your Dockerfile (cpu or cuda)
       # - LOG_LEVEL=INFO
     # volumes: # Example if you need to mount .env or models not in image
@@ -71,11 +73,14 @@ services:
     hostname: llm_orchestrator_worker
     networks:
       - voice_assistant_net
+      - ollama
     depends_on:
       - redis
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - LLM_BASE_URL=http://spt-smi_ollama:11434
+      - NLTK_DATA=/usr/share/nltk_data
       # - LLM_API_KEY=your_llm_api_key_here # Use Docker secrets for production
       # - LOG_LEVEL=INFO
     # volumes:
@@ -110,6 +115,11 @@ services:
       # - ./tts_worker/.env:/app/tts_worker/.env
       # - /path/to/local/piper_executable:/app/tts_worker/piper_tts/piper 
       # - /path/to/local/piper_voices:/app/tts_worker/piper_tts/voices
+    volumes:
+        - /data/smi/prod/data:/data
+        - /data/smi/prod/cache:/app/.cache
+        - /data/smi/prod/cache:/root/.cache
+        - /data/smi/prod/cache:/root/.local/share
     deploy:
       replicas: 1
       update_config:
@@ -129,5 +139,8 @@ networks:
     driver: overlay
     attachable: true
   webfacing:
+    driver: overlay
+    external: true
+  ollama:
     driver: overlay
     external: true
