@@ -9,8 +9,9 @@ VAD_STT_IMAGE_NAME="spt-assistant-vad-stt"
 LLM_ORCHESTRATOR_IMAGE_NAME="spt-assistant-llm-orchestrator"
 TTS_IMAGE_NAME="spt-assistant-tts"
 IMAGE_TAG="latest"
+DOCKER_REGISTRY="registry.sponge-theory.dev"
 GIT_VERSION=$(git rev-parse --short HEAD)
-
+PORTAINER_WEBHOOK_URL="https://portainer.sponge-theory.dev/api/stacks/webhooks/df302c15-c3ab-4a31-95fe-6d4985fda263"
 
 (cd frontend && npm run build)
 
@@ -34,21 +35,20 @@ echo "Building TTS worker image: ${TTS_IMAGE_NAME}:${GIT_VERSION}..."
 docker build -t "${TTS_IMAGE_NAME}:${GIT_VERSION}" --platform linux/amd64 -f Dockerfile.tts .
 echo "TTS worker image built successfully."
 
+echo "Pushing production Docker images to ${DOCKER_REGISTRY}"
+docker tag "${API_IMAGE_NAME}:${GIT_VERSION}" ${DOCKER_REGISTRY}/${API_IMAGE_NAME}:${IMAGE_TAG}
+docker tag "${VAD_STT_IMAGE_NAME}:${GIT_VERSION}" ${DOCKER_REGISTRY}/${VAD_STT_IMAGE_NAME}:${IMAGE_TAG}
+docker tag "${LLM_ORCHESTRATOR_IMAGE_NAME}:${GIT_VERSION}" ${DOCKER_REGISTRY}/${LLM_ORCHESTRATOR_IMAGE_NAME}:${IMAGE_TAG}
+docker tag "${TTS_IMAGE_NAME}:${GIT_VERSION}" ${DOCKER_REGISTRY}/${TTS_IMAGE_NAME}:${IMAGE_TAG}
 
-echo "Pushing production Docker images to registry.sponge-theory.dev"
-docker tag "${API_IMAGE_NAME}:${GIT_VERSION}" registry.sponge-theory.dev/spt-assistant-api:${IMAGE_TAG}
-docker tag "${VAD_STT_IMAGE_NAME}:${GIT_VERSION}" registry.sponge-theory.dev/spt-assistant-vad-stt:${IMAGE_TAG}
-docker tag "${LLM_ORCHESTRATOR_IMAGE_NAME}:${GIT_VERSION}" registry.sponge-theory.dev/spt-assistant-llm-orchestrator:${IMAGE_TAG}
-docker tag "${TTS_IMAGE_NAME}:${GIT_VERSION}" registry.sponge-theory.dev/spt-assistant-tts:${IMAGE_TAG}
+docker push ${DOCKER_REGISTRY}/${API_IMAGE_NAME}:${IMAGE_TAG}
+docker push ${DOCKER_REGISTRY}/${VAD_STT_IMAGE_NAME}:${IMAGE_TAG}
+docker push ${DOCKER_REGISTRY}/${LLM_ORCHESTRATOR_IMAGE_NAME}:${IMAGE_TAG}
+docker push ${DOCKER_REGISTRY}/${TTS_IMAGE_NAME}:${IMAGE_TAG}
 
-docker push registry.sponge-theory.dev/spt-assistant-api:${IMAGE_TAG}
-docker push registry.sponge-theory.dev/spt-assistant-vad-stt:${IMAGE_TAG}
-docker push registry.sponge-theory.dev/spt-assistant-llm-orchestrator:${IMAGE_TAG}
-docker push registry.sponge-theory.dev/spt-assistant-tts:${IMAGE_TAG}
-
-echo "Production Docker images pushed to registry.sponge-theory.dev/spt-assistant:${IMAGE_TAG}"
+echo "Production Docker images pushed to ${DOCKER_REGISTRY}"
 echo "Triggering deployment to Portainer..."
-curl -X POST https://portainer.sponge-theory.dev/api/stacks/webhooks/df302c15-c3ab-4a31-95fe-6d4985fda263
+curl -X POST ${PORTAINER_WEBHOOK_URL}
 
 echo "
 All Docker images built and pushed successfully:
