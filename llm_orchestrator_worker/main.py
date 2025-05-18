@@ -13,7 +13,7 @@ from llm_orchestrator_worker.logging_config import get_logger
 from llm_orchestrator_worker.llm_service import LLMService, Message
 from llm_orchestrator_worker.tool_router import ToolRouter
 
-nltk.download('punkt')
+nltk.download('punkt_tab') # Removed: NLTK data should be pre-downloaded in Docker image
 # Load .env file
 load_dotenv(dotenv_path="llm_orchestrator/.env")
 
@@ -98,26 +98,6 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
             }
             await client.publish(orchestrator_settings.TTS_REQUEST_CHANNEL, json.dumps(tts_req_message))
             logger.info(f"Published TTS request for conv_id '{conv_id}': '{sentence.strip()}'")
-
-    # Attempt to download nltk.punkt if not available, with a flag to prevent repeated attempts per run
-    if not hasattr(process_llm_interaction, '_punkt_download_attempted'):
-        try:
-            nltk.data.find('tokenizers/punkt')
-        except nltk.downloader.DownloadError:
-            logger.warning("NLTK 'punkt' tokenizer not found. Attempting to download...")
-            try:
-                nltk.download('punkt', quiet=True)
-                logger.info("NLTK 'punkt' tokenizer downloaded successfully.")
-            except Exception as e:
-                logger.error(f"Failed to download NLTK 'punkt' tokenizer: {e}. Sentence tokenization for TTS might fail.", exc_info=True)
-        except LookupError: # Handles cases where nltk.data.find itself fails if punkt is missing from default paths
-            logger.warning("NLTK 'punkt' tokenizer not found (LookupError). Attempting to download...")
-            try:
-                nltk.download('punkt', quiet=True)
-                logger.info("NLTK 'punkt' tokenizer downloaded successfully.")
-            except Exception as e:
-                logger.error(f"Failed to download NLTK 'punkt' tokenizer: {e}. Sentence tokenization for TTS might fail.", exc_info=True)
-        setattr(process_llm_interaction, '_punkt_download_attempted', True)
 
     while current_tool_recursion < max_tool_recursion:
         assistant_response_content = ""

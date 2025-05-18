@@ -11,6 +11,9 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DEFAULT_TIMEOUT=100 \
     PATH="/app/.local/bin:$PATH"
 
+# Set NLTK_DATA environment variable
+ENV NLTK_DATA /usr/share/nltk_data
+
 # Install uv
 RUN pip install uv
 
@@ -25,6 +28,10 @@ RUN uv venv && \
     . .venv/bin/activate
 # Install dependencies using uv
 RUN uv sync
+
+# Download NLTK data
+RUN python -m nltk.downloader -d /usr/share/nltk_data punkt
+RUN python -m nltk.downloader -d /usr/share/nltk_data punkt_tab
 
 # Copy the worker application code
 COPY ./llm_orchestrator_worker /app/llm_orchestrator_worker

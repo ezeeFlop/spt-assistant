@@ -236,7 +236,7 @@ class LLMService:
             response_stream:litellm.ModelResponseStream = await litellm.acompletion(**llm_call_params)
             
             async for chunk in response_stream:
-                logger.info(f"LLM Service Raw Chunk: {chunk}") # LOG RAW CHUNK
+                logger.debug(f"LLM Service Raw Chunk: {chunk}") # LOG RAW CHUNK
                 if cancellation_event.is_set():
                     logger.info(f"LLM stream for conv_id {conversation_id} cancelled.")
                     if hasattr(response_stream, 'aclose'):
