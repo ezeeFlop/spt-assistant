@@ -1,0 +1,136 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spt-assistant-client"
+version = "1.0.0"
+description = "Python client for SPT Assistant voice interface"
+authors = [
+    {name = "SPT Assistant Team", email = "team@spt-assistant.com"},
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+keywords = ["voice", "ai", "assistant", "websocket", "audio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Communications",
+]
+
+dependencies = [
+    "websockets>=12.0",
+    "pyaudio>=0.2.11",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "structlog>=23.0.0",
+    "python-dotenv>=1.0.0",
+    "aiofiles>=23.0.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "adaptfilt>=0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+spt-client = "spt_assistant_client.spt_client:main"
+
+[project.urls]
+Homepage = "https://github.com/spt-assistant/spt-assistant"
+Repository = "https://github.com/spt-assistant/spt-assistant"
+Documentation = "https://github.com/spt-assistant/spt-assistant/blob/main/client/README.md"
+Issues = "https://github.com/spt-assistant/spt-assistant/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["spt_assistant_client"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "auto" 
