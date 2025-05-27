@@ -11,7 +11,7 @@ TTS_IMAGE_NAME="spt-assistant-tts"
 IMAGE_TAG="latest"
 DOCKER_REGISTRY="registry.sponge-theory.dev"
 GIT_VERSION=$(git rev-parse --short HEAD)
-PORTAINER_WEBHOOK_URL="https://portainer.sponge-theory.dev/api/stacks/webhooks/df302c15-c3ab-4a31-95fe-6d4985fda263"
+PORTAINER_WEBHOOK_URL="https://portainer.sponge-theory.dev/api/stacks/webhooks/52440b17-b5ce-4c87-b690-25c39eea8ee6"
 
 (cd frontend && npm run build)
 

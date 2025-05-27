@@ -12,7 +12,7 @@
 
 SPT Assistant is a cutting-edge, real-time AI voice assistant that prioritizes privacy, local execution, and enterprise-grade scalability. Built with a distributed microservices architecture, it delivers natural voice conversations with advanced features like barge-in detection, streaming responses, and flexible deployment options.
 
-![SPT Assistant Architecture](docs/architecture.png)
+![SPT Assistant](docs/frontend.png)
 
 ## 🚀 Key Features
 
