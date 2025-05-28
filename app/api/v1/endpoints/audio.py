@@ -11,6 +11,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 from typing import Dict, List, Any
 from logging import getLogger
+import time
 logger = getLogger(__name__)
 
 router = APIRouter()
@@ -298,6 +299,34 @@ async def forward_barge_in_notifications_to_client(websocket: WebSocket, convers
                 logger.error(f"Forward_barge_in: Error during pubsub cleanup for conv_id {conversation_id}: {e_cleanup}", exc_info=True)
         logger.info(f"forward_barge_in_notifications_to_client: Stopped for conv_id {conversation_id}")
 
+async def publish_connection_disconnect_event(
+    conversation_id: str, 
+    reason: str = "client_disconnect",
+    redis_service_instance: RedisService = None
+):
+    """
+    Publishes a connection disconnect event to notify all workers that a conversation has ended.
+    This allows workers to clean up resources for the disconnected conversation.
+    """
+    if not redis_service_instance:
+        redis_service_instance = redis_service
+    
+    disconnect_event = {
+        "type": "connection_disconnected",
+        "conversation_id": conversation_id,
+        "timestamp_ms": int(time.time() * 1000),
+        "reason": reason
+    }
+    
+    try:
+        await redis_service_instance.publish_message(
+            settings.CONNECTION_EVENTS_CHANNEL, 
+            json.dumps(disconnect_event)
+        )
+        logger.info(f"Gateway: Published connection disconnect event for conv_id {conversation_id}, reason: {reason}")
+    except Exception as e:
+        logger.error(f"Gateway: Failed to publish connection disconnect event for conv_id {conversation_id}: {e}", exc_info=True)
+
 @router.websocket("/ws/audio")
 async def websocket_audio_endpoint(websocket: WebSocket):
     user_identifier = "anonymous_websocket_user" 
@@ -332,6 +361,7 @@ async def websocket_audio_endpoint(websocket: WebSocket):
         # Underlying 'websockets' library saw a clean close (e.g., code 1000/1001 from peer)
         logger.info(f"Gateway: Initial message for conv_id {conversation_id} not sent: Client connection closed cleanly by peer (code {e_cco.code}, reason: '{e_cco.reason or ''}').")
         if conversation_id in active_connections: del active_connections[conversation_id]
+        await publish_connection_disconnect_event(conversation_id, "client_disconnect_early")
         return
 
     except WebSocketDisconnect as e_wsd:
@@ -345,12 +375,14 @@ async def websocket_audio_endpoint(websocket: WebSocket):
         
         log_func(f"{log_message_prefix} (code {e_wsd.code}, reason: '{e_wsd.reason or 'N/A'}').")
         if conversation_id in active_connections: del active_connections[conversation_id]
+        await publish_connection_disconnect_event(conversation_id, "client_disconnect_early")
         return
 
     except ConnectionClosedError as e_cce:
         # Underlying 'websockets' library indicated an error during close or already closed state.
         logger.warning(f"Gateway: Failed to send initial message for conv_id {conversation_id}: Connection error (code {e_cce.code}, reason: '{e_cce.reason or ''}').")
         if conversation_id in active_connections: del active_connections[conversation_id]
+        await publish_connection_disconnect_event(conversation_id, "connection_error_early")
         return
         
     except Exception as e_send_event: # Catch other unexpected errors during send
@@ -366,6 +398,7 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                 logger.debug(f"Gateway: Attempted to close an already closed socket for conv_id {conversation_id} after send_json failed (general exception).")
             except Exception as e_close_after_send_fail:
                  logger.error(f"Gateway: Further error when trying to close socket for conv_id {conversation_id} after send_json failed (general exception): {e_close_after_send_fail}", exc_info=True)
+        await publish_connection_disconnect_event(conversation_id, "server_error_early")
         return
 
     all_managed_tasks: List[asyncio.Task] = [] 
@@ -430,6 +463,13 @@ async def websocket_audio_endpoint(websocket: WebSocket):
         logger.error(f"Gateway: Error in main WebSocket handler for conv_id {conversation_id}: {e_main_handler}", exc_info=True)
     finally:
         logger.info(f"Gateway: Cleaning up WebSocket connection for conv_id {conversation_id}.")
+        
+        # Publish connection disconnect event to notify all workers
+        try:
+            await publish_connection_disconnect_event(conversation_id, "connection_cleanup")
+        except Exception as e_disconnect_publish:
+            logger.error(f"Gateway: Failed to publish disconnect event during cleanup for conv_id {conversation_id}: {e_disconnect_publish}", exc_info=True)
+        
         if conversation_id in active_connections:
             del active_connections[conversation_id]
         

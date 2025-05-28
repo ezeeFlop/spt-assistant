@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     LLM_TOOL_CALL_CHANNEL: str = "llm_tool_call_channel" # Channel LLM Orchestrator publishes tool calls/status to
     AUDIO_OUTPUT_STREAM_CHANNEL_PATTERN: str = "audio_output_stream:{conversation_id}" # Pattern for TTS audio output
     BARGE_IN_CHANNEL: str = "barge_in_notifications"  # Channel VAD worker publishes barge-in events to
+    CONNECTION_EVENTS_CHANNEL: str = "connection_events"  # New channel for connection lifecycle events
     VITE_API_BASE_URL: str = "ws://localhost:8000/api/v1/ws/audio"
 
     # JWT Settings (FR-Security)

@@ -51,6 +51,36 @@ async def save_conversation_history(conversation_id: str, history: List[Dict], r
     # History should now be a list of dicts, ready for JSON serialization.
     await redis_client.set(history_key, json.dumps(history), ex=orchestrator_settings.CONVERSATION_DATA_TTL_SECONDS)
 
+async def handle_connection_disconnect_event(conversation_id: str, reason: str, llm_service: LLMService, redis_client: redis.Redis):
+    """
+    Handles connection disconnect events by cleaning up LLM generation and conversation data
+    for the specified conversation. This ensures that when a WebSocket connection is closed,
+    all associated LLM processing resources are properly cleaned up.
+    """
+    logger.info(f"LLM Orchestrator: Handling connection disconnect for conv_id {conversation_id}, reason: {reason}")
+    
+    try:
+        # 1. Cancel any active LLM generation for this conversation
+        llm_service.cancel_generation(conversation_id)
+        logger.info(f"LLM Orchestrator: Cancelled LLM generation for disconnected conv_id {conversation_id}")
+        
+        # 2. Send TTS stop command to ensure any active TTS is stopped
+        tts_stop_message = {
+            "command": "stop_tts",
+            "conversation_id": conversation_id
+        }
+        await redis_client.publish(orchestrator_settings.TTS_CONTROL_CHANNEL, json.dumps(tts_stop_message))
+        logger.info(f"LLM Orchestrator: Sent TTS stop command for disconnected conv_id {conversation_id}")
+        
+        # 3. Clean up conversation data from Redis (optional - could keep for reconnection)
+        # For now, we'll keep the conversation history in case the user reconnects
+        # but we could add cleanup logic here if needed
+        
+        logger.info(f"LLM Orchestrator: Completed cleanup for disconnected conv_id {conversation_id}")
+        
+    except Exception as e:
+        logger.error(f"LLM Orchestrator: Error cleaning up resources for conv_id {conversation_id}: {e}", exc_info=True)
+
 async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService, tool_router: ToolRouter, redis_client: redis.Redis):
     conversation_id = transcript_data.get("conversation_id")
     user_text = transcript_data.get("transcript")
@@ -322,6 +352,53 @@ async def subscribe_to_barge_in_notifications(redis_client: redis.Redis, llm_ser
     await pubsub.close()
     logger.info(f"Orchestrator unsubscribed and closed pubsub for barge-in channel: {barge_in_channel}.")
 
+async def subscribe_to_connection_events(redis_client: redis.Redis, llm_service: LLMService):
+    """
+    Subscribes to connection events channel to handle connection disconnects.
+    This allows the orchestrator to clean up LLM generation and conversation resources
+    when connections are closed.
+    """
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(orchestrator_settings.CONNECTION_EVENTS_CHANNEL)
+    logger.info(f"LLM Orchestrator subscribed to connection events channel: {orchestrator_settings.CONNECTION_EVENTS_CHANNEL}")
+
+    global running
+    while running:
+        try:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            if message and message["type"] == "message":
+                message_data_str = message["data"].decode('utf-8')
+                logger.debug(f"LLM Orchestrator: Received connection event: {message_data_str}")
+                
+                try:
+                    event_data = json.loads(message_data_str)
+                    event_type = event_data.get("type")
+                    conversation_id = event_data.get("conversation_id")
+                    reason = event_data.get("reason", "unknown")
+                    
+                    if event_type == "connection_disconnected" and conversation_id:
+                        await handle_connection_disconnect_event(conversation_id, reason, llm_service, redis_client)
+                    else:
+                        logger.debug(f"LLM Orchestrator: Ignoring connection event type: {event_type}")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"LLM Orchestrator: Error decoding connection event JSON: {e} - Data: {message_data_str}")
+                except Exception as e:
+                    logger.error(f"LLM Orchestrator: Error processing connection event: {e}", exc_info=True)
+            elif message is None:
+                await asyncio.sleep(0.01)
+                
+        except redis.exceptions.ConnectionError as e:
+            logger.error(f"LLM Orchestrator: Redis connection error in connection events loop: {e}. Retrying...", exc_info=True)
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"LLM Orchestrator: Error in connection events subscription loop: {e}", exc_info=True)
+            await asyncio.sleep(1)
+    
+    await pubsub.unsubscribe(orchestrator_settings.CONNECTION_EVENTS_CHANNEL)
+    await pubsub.close()
+    logger.info(f"LLM Orchestrator: Unsubscribed and closed pubsub for connection events channel: {orchestrator_settings.CONNECTION_EVENTS_CHANNEL}.")
+
 def signal_handler_orchestrator(signum, frame):
     global running
     logger.info(f"Signal {signum} received by orchestrator, shutting down...")
@@ -342,6 +419,7 @@ async def main_async_orchestrator():
     redis_client = None
     transcript_subscriber_task = None # Added for tracking
     barge_in_subscriber_task = None # Added for tracking
+    connection_events_task = None # Added for tracking connection events
     try:
         redis_client = redis.Redis(
             host=orchestrator_settings.REDIS_HOST,
@@ -361,12 +439,16 @@ async def main_async_orchestrator():
         barge_in_subscriber_task = asyncio.create_task(
             subscribe_to_barge_in_notifications(redis_client, llm_service_instance)
         )
+        connection_events_task = asyncio.create_task(
+            subscribe_to_connection_events(redis_client, llm_service_instance)
+        )
         
         logger.info("LLM Orchestrator has started successfully and is now processing.")
 
         await asyncio.gather(
             transcript_subscriber_task,
-            barge_in_subscriber_task
+            barge_in_subscriber_task,
+            connection_events_task
         )
 
     except ConnectionRefusedError as e:
@@ -381,6 +463,7 @@ async def main_async_orchestrator():
         running = False
         if transcript_subscriber_task: transcript_subscriber_task.cancel()
         if barge_in_subscriber_task: barge_in_subscriber_task.cancel()
+        if connection_events_task: connection_events_task.cancel()
         # Wait for tasks to cancel (optional, depends on task cleanup needs)
         # if transcript_subscriber_task or barge_in_subscriber_task:
         #    await asyncio.sleep(0.5) 

@@ -13,6 +13,7 @@ class WorkerSettings(BaseSettings):
     AUDIO_STREAM_CHANNEL: str = "audio_stream_channel"    # Channel to receive audio chunks from API gateway
     TRANSCRIPT_CHANNEL: str = "transcript_channel"      # Channel to publish ASR results to
     BARGE_IN_CHANNEL: str = "barge_in_notifications"   # Channel to publish barge-in events to
+    CONNECTION_EVENTS_CHANNEL: str = "connection_events"  # Channel to receive connection lifecycle events
     TTS_ACTIVE_STATE_PREFIX: str = "tts_active_state:"  # Redis key prefix to check if TTS is active (align with tts_service)
 
     # VAD Settings (Silero)

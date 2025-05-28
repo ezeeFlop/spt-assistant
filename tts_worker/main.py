@@ -360,6 +360,100 @@ async def subscribe_to_tts_control(redis_client: redis.Redis):
     logger.info(f"TTS Service unsubscribed and closed pubsub for control channel: {tts_settings.BARGE_IN_CHANNEL}.")
 
 
+async def handle_connection_disconnect_event(conversation_id: str, reason: str, redis_client: redis.Redis):
+    """
+    Handles connection disconnect events by cleaning up TTS processing resources
+    for the specified conversation. This ensures that when a WebSocket connection is closed,
+    all associated TTS processing resources are properly cleaned up.
+    """
+    logger.info(f"TTS Worker: Handling connection disconnect for conv_id {conversation_id}, reason: {reason}")
+    
+    try:
+        # 1. Cancel any active TTS processor for this conversation
+        if conversation_id in active_tts_processors:
+            task_to_cancel = active_tts_processors[conversation_id]
+            if not task_to_cancel.done():
+                logger.info(f"TTS Worker: Cancelling processor task for disconnected conv_id {conversation_id}")
+                task_to_cancel.cancel()
+            else:
+                logger.info(f"TTS Worker: Processor task for disconnected conv_id {conversation_id} already done")
+            del active_tts_processors[conversation_id]
+        
+        # 2. Clear any pending TTS requests in the queue
+        if conversation_id in tts_request_queues:
+            queue = tts_request_queues[conversation_id]
+            queue_size = queue.qsize()
+            if queue_size > 0:
+                logger.info(f"TTS Worker: Clearing {queue_size} pending TTS requests for disconnected conv_id {conversation_id}")
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                        queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
+            del tts_request_queues[conversation_id]
+        
+        # 3. Clear TTS active state in Redis
+        await set_tts_active_state_for_conversation(conversation_id, redis_client, False)
+        
+        logger.info(f"TTS Worker: Completed cleanup for disconnected conv_id {conversation_id}")
+        
+    except Exception as e:
+        logger.error(f"TTS Worker: Error cleaning up resources for conv_id {conversation_id}: {e}", exc_info=True)
+
+async def subscribe_to_connection_events(redis_client: redis.Redis):
+    """
+    Subscribes to connection events channel to handle connection disconnects.
+    This allows the TTS worker to clean up processing resources when connections are closed.
+    """
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(tts_settings.CONNECTION_EVENTS_CHANNEL)
+    logger.info(f"TTS Worker subscribed to connection events channel: {tts_settings.CONNECTION_EVENTS_CHANNEL}")
+
+    global running
+    while running:
+        try:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            if message and message["type"] == "message":
+                message_data_str = message["data"].decode('utf-8')
+                logger.debug(f"TTS Worker: Received connection event: {message_data_str}")
+                
+                try:
+                    event_data = json.loads(message_data_str)
+                    event_type = event_data.get("type")
+                    conversation_id = event_data.get("conversation_id")
+                    reason = event_data.get("reason", "unknown")
+                    
+                    if event_type == "connection_disconnected" and conversation_id:
+                        await handle_connection_disconnect_event(conversation_id, reason, redis_client)
+                    else:
+                        logger.debug(f"TTS Worker: Ignoring connection event type: {event_type}")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"TTS Worker: Error decoding connection event JSON: {e} - Data: {message_data_str}")
+                except Exception as e:
+                    logger.error(f"TTS Worker: Error processing connection event: {e}", exc_info=True)
+            elif message is None:
+                await asyncio.sleep(0.01)
+                
+        except redis.RedisError as e:
+            logger.error(f"TTS Worker: Redis error in connection events loop: {e}. Retrying...", exc_info=True)
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"TTS Worker: Error in connection events subscription loop: {e}", exc_info=True)
+            await asyncio.sleep(1)
+    
+    try:
+        await pubsub.unsubscribe(tts_settings.CONNECTION_EVENTS_CHANNEL)
+    except redis.RedisError:
+        pass  # nosec
+    try:
+        await pubsub.close()
+    except redis.RedisError:
+        pass  # nosec
+    logger.info(f"TTS Worker: Unsubscribed and closed pubsub for connection events channel: {tts_settings.CONNECTION_EVENTS_CHANNEL}.")
+
+
 def signal_handler_tts(signum, frame):
     global running
     logger.info(f"Signal {signum} received by TTS Worker, initiating shutdown...")
@@ -398,7 +492,11 @@ async def main_async_tts():
             subscribe_to_tts_control(redis_client_tts)
         )
         
-        active_tasks_to_await.extend([request_subscriber_task, control_subscriber_task])
+        connection_events_task = asyncio.create_task(
+            subscribe_to_connection_events(redis_client_tts)
+        )
+        
+        active_tasks_to_await.extend([request_subscriber_task, control_subscriber_task, connection_events_task])
         logger.info("TTS Worker has started successfully and is now processing requests and control commands.")
 
         # Keep main alive while `running` is true, checking periodically
@@ -422,6 +520,7 @@ async def main_async_tts():
         # 1. Cancel main subscriber tasks first
         if 'request_subscriber_task' in locals() and request_subscriber_task: request_subscriber_task.cancel()
         if 'control_subscriber_task' in locals() and control_subscriber_task: control_subscriber_task.cancel()
+        if 'connection_events_task' in locals() and connection_events_task: connection_events_task.cancel()
 
         # 2. Cancel all active TTS processor tasks
         logger.info(f"Cancelling {len(active_tts_processors)} active TTS processor tasks...")

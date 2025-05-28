@@ -69,39 +69,132 @@ async def publish_transcript(redis_client: redis.Redis, conversation_id: str, tr
         logger.error(f"Unexpected error publishing transcript for conv_id {conversation_id}: {e}", exc_info=True)
 
 async def cleanup_inactive_processors_periodically():
-    """Periodically checks for and cleans up inactive AudioProcessor instances."""
+    """Periodically clean up AudioProcessor instances that have been inactive for too long."""
+    global last_activity_time, active_processors
     while not shutdown_event.is_set():
         try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=PROCESSOR_INACTIVITY_TIMEOUT_S / 2) # Check more frequently than timeout
-            if shutdown_event.is_set(): break
-        except asyncio.TimeoutError:
-            pass # Normal timeout, proceed with cleanup check
-
-        current_time = time.time()
-        conv_ids_to_cleanup = []
-        async with processor_management_lock: # Ensure safe iteration and modification
-            for conv_id, last_active in list(last_activity_time.items()): # list() for safe iteration if modifying
-                if current_time - last_active > PROCESSOR_INACTIVITY_TIMEOUT_S:
-                    if conv_id in active_processors:
-                        logger.info(f"Processor for conv_id {conv_id} inactive for > {PROCESSOR_INACTIVITY_TIMEOUT_S}s. Scheduling cleanup.")
-                        conv_ids_to_cleanup.append(conv_id)
-                    else:
-                        # Processor already gone, but last_activity_time entry exists. Clean it up.
-                        conv_ids_to_cleanup.append(conv_id) 
+            await asyncio.sleep(30) # Check every 30 seconds
+            current_time = time.time()
+            conversations_to_cleanup = []
             
-            for conv_id in conv_ids_to_cleanup:
-                processor_to_close = active_processors.pop(conv_id, None)
-                if processor_to_close:
-                    logger.info(f"Closing timed-out AudioProcessor for conv_id {conv_id}...")
+            async with processor_management_lock:
+                for conv_id, last_activity in list(last_activity_time.items()):
+                    if current_time - last_activity > worker_settings.WORKER_PROCESSOR_INACTIVITY_TIMEOUT_S:
+                        conversations_to_cleanup.append(conv_id)
+                        logger.info(f"Marking conv_id {conv_id} for cleanup due to inactivity (last activity: {current_time - last_activity:.1f}s ago)")
+                
+                for conv_id in conversations_to_cleanup:
+                    if conv_id in active_processors:
+                        try:
+                            active_processors[conv_id].close()
+                            logger.info(f"Cleaned up inactive AudioProcessor for conv_id {conv_id}")
+                        except Exception as e:
+                            logger.error(f"Error cleaning up AudioProcessor for conv_id {conv_id}: {e}", exc_info=True)
+                        del active_processors[conv_id]
+                    
+                    if conv_id in last_activity_time:
+                        del last_activity_time[conv_id]
+                        
+        except asyncio.CancelledError:
+            logger.info("Periodic cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic cleanup task: {e}", exc_info=True)
+
+async def handle_connection_disconnect_event(conversation_id: str, reason: str):
+    """
+    Handles connection disconnect events by cleaning up resources for the specified conversation.
+    This ensures that when a WebSocket connection is closed, all associated audio processing
+    resources are properly cleaned up.
+    """
+    logger.info(f"VAD/STT Worker: Handling connection disconnect for conv_id {conversation_id}, reason: {reason}")
+    
+    async with processor_management_lock:
+        # Clean up audio processor if it exists
+        if conversation_id in active_processors:
+            try:
+                processor = active_processors[conversation_id]
+                processor.close()
+                del active_processors[conversation_id]
+                logger.info(f"VAD/STT Worker: Cleaned up AudioProcessor for disconnected conv_id {conversation_id}")
+            except Exception as e:
+                logger.error(f"VAD/STT Worker: Error cleaning up AudioProcessor for conv_id {conversation_id}: {e}", exc_info=True)
+        
+        # Clean up activity tracking
+        if conversation_id in last_activity_time:
+            del last_activity_time[conversation_id]
+            logger.debug(f"VAD/STT Worker: Removed activity tracking for conv_id {conversation_id}")
+
+async def subscribe_to_connection_events(redis_client: redis.Redis):
+    """
+    Subscribes to connection events channel to handle connection disconnects.
+    This allows the worker to clean up resources when connections are closed.
+    """
+    pubsub: Any = None
+    try:
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(worker_settings.CONNECTION_EVENTS_CHANNEL)
+        logger.info(f"VAD/STT Worker subscribed to connection events channel: {worker_settings.CONNECTION_EVENTS_CHANNEL}")
+
+        while not shutdown_event.is_set():
+            try:
+                # Check for shutdown event
+                await asyncio.wait_for(shutdown_event.wait(), timeout=0.001)
+                if shutdown_event.is_set():
+                    logger.info("Shutdown event detected in connection events listener, exiting...")
+                    break
+            except asyncio.TimeoutError:
+                pass # Normal timeout, continue listening
+
+            try:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                if message and message["type"] == "message":
+                    message_data_str = message["data"].decode('utf-8')
+                    logger.debug(f"VAD/STT Worker: Received connection event: {message_data_str}")
+                    
                     try:
-                        processor_to_close.close()
-                        logger.info(f"Closed timed-out AudioProcessor for conv_id {conv_id}.")
-                    except Exception as e_proc_close:
-                        logger.error(f"Error closing timed-out AudioProcessor for conv_id {conv_id}: {e_proc_close}", exc_info=True)
-                if conv_id in last_activity_time: # Remove from activity tracking
-                    del last_activity_time[conv_id]
-        if conv_ids_to_cleanup:
-            logger.info(f"Cleaned up {len(conv_ids_to_cleanup)} inactive processors.")
+                        event_data = json.loads(message_data_str)
+                        event_type = event_data.get("type")
+                        conversation_id = event_data.get("conversation_id")
+                        reason = event_data.get("reason", "unknown")
+                        
+                        if event_type == "connection_disconnected" and conversation_id:
+                            await handle_connection_disconnect_event(conversation_id, reason)
+                        else:
+                            logger.debug(f"VAD/STT Worker: Ignoring connection event type: {event_type}")
+                            
+                    except json.JSONDecodeError as e:
+                        logger.error(f"VAD/STT Worker: Error decoding connection event JSON: {e} - Data: {message_data_str}")
+                    except Exception as e:
+                        logger.error(f"VAD/STT Worker: Error processing connection event: {e}", exc_info=True)
+                elif message is None:
+                    await asyncio.sleep(0.01)
+                    
+            except asyncio.TimeoutError:
+                await asyncio.sleep(0.01)
+                continue
+            except RedisError as e:
+                logger.error(f"VAD/STT Worker: Redis error in connection events loop: {e}", exc_info=True)
+                if isinstance(e, RedisConnectionError):
+                    await asyncio.sleep(5)
+                else:
+                    shutdown_event.set()
+                    break
+            except Exception as e:
+                logger.error(f"VAD/STT Worker: Unexpected error in connection events loop: {e}", exc_info=True)
+                await asyncio.sleep(1)
+                
+    except Exception as e:
+        logger.error(f"VAD/STT Worker: Error setting up connection events subscription: {e}", exc_info=True)
+    finally:
+        if pubsub:
+            try:
+                logger.info(f"VAD/STT Worker: Unsubscribing from {worker_settings.CONNECTION_EVENTS_CHANNEL}")
+                await pubsub.unsubscribe(worker_settings.CONNECTION_EVENTS_CHANNEL)
+                await pubsub.close()
+                logger.info("VAD/STT Worker: Connection events pubsub unsubscribed and closed.")
+            except Exception as e_pubsub_close:
+                logger.error(f"VAD/STT Worker: Error closing connection events pubsub: {e_pubsub_close}", exc_info=True)
 
 async def process_audio_messages_from_redis(redis_client: redis.Redis):
     pubsub: Any = None
@@ -275,6 +368,7 @@ async def main():
 
     redis_client: redis.Redis | None = None
     cleanup_task: asyncio.Task | None = None
+    connection_events_task: asyncio.Task | None = None
     try:
         redis_client = redis.Redis(
             host=worker_settings.REDIS_HOST,
@@ -288,6 +382,10 @@ async def main():
         # Start the periodic cleanup task
         cleanup_task = asyncio.create_task(cleanup_inactive_processors_periodically())
         logger.info("Inactive processor cleanup task started.")
+        
+        # Start the connection events listener task
+        connection_events_task = asyncio.create_task(subscribe_to_connection_events(redis_client))
+        logger.info("Connection events listener task started.")
 
         logger.info("VAD/STT Worker has started successfully and is now processing audio.")
         await process_audio_messages_from_redis(redis_client)
@@ -308,6 +406,17 @@ async def main():
                 logger.info("Inactive processor cleanup task confirmed cancelled.")
             except Exception as e_cleanup_task:
                 logger.error(f"Error during cleanup task shutdown: {e_cleanup_task}", exc_info=True)
+        
+        if connection_events_task and not connection_events_task.done():
+            logger.info("Cancelling connection events listener task...")
+            connection_events_task.cancel()
+            try:
+                await connection_events_task
+                logger.info("Connection events listener task cancelled and finished.")
+            except asyncio.CancelledError:
+                logger.info("Connection events listener task confirmed cancelled.")
+            except Exception as e_connection_events_task:
+                logger.error(f"Error during connection events task shutdown: {e_connection_events_task}", exc_info=True)
         
         if redis_client:
             try:
