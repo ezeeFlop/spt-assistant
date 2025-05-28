@@ -13,7 +13,7 @@ import Combine
 // MARK: - Data Models
 
 struct ChatMessage: Identifiable, Codable {
-    let id = UUID()
+    let id: UUID
     let type: MessageType
     let content: String
     let timestamp: Date
@@ -23,6 +23,14 @@ struct ChatMessage: Identifiable, Codable {
         case assistant = "assistant"
         case toolStatus = "tool_status"
         case partialTranscript = "partial_transcript"
+    }
+    
+    // CRITICAL FIX: Allow custom ID to be provided
+    init(id: UUID = UUID(), type: MessageType, content: String, timestamp: Date) {
+        self.id = id
+        self.type = type
+        self.content = content
+        self.timestamp = timestamp
     }
 }
 
@@ -156,8 +164,6 @@ class AppState: ObservableObject {
             return
         }
         
-        clearChat()
-        stopAudioPlayback()
         audioManager?.startRecording(inputDevice: selectedInputDevice)
     }
     
@@ -228,11 +234,11 @@ class AppState: ObservableObject {
             }
             
         case "partial_transcript":
-            if let transcript = message["transcript"] as? String {
+            if let transcript = message["text"] as? String {
                 partialTranscript = transcript
                 print("Received partial transcript: '\(transcript)'")
             } else {
-                print("Partial transcript message missing 'transcript' field: \(message)")
+                print("Partial transcript message missing 'text' field: \(message)")
             }
             
         case "final_transcript":
@@ -266,6 +272,7 @@ class AppState: ObservableObject {
         case "user_interrupted":
             if let conversationId = message["conversation_id"] as? String,
                conversationId == activeConversationId {
+                print("🚨 RECEIVED user_interrupted - CALLING stopAudioPlayback()")
                 stopAudioPlayback()
                 clearCurrentAssistantMessage()
             }
@@ -279,7 +286,7 @@ class AppState: ObservableObject {
                 if currentAssistantMessageId == nil {
                     startAssistantMessage()
                 }
-                audioManager?.startAudioPlayback(sampleRate: sampleRate, channels: channels, outputDevice: selectedOutputDevice)
+                audioManager?.startRealTimeAudioPlayback(sampleRate: sampleRate, channels: channels, outputDevice: selectedOutputDevice)
             }
             
         case "raw_audio_chunk":
@@ -287,7 +294,7 @@ class AppState: ObservableObject {
                conversationId == activeConversationId,
                let audioData = message["data"] as? Data {
                 print("Received audio chunk: \(audioData.count) bytes for conversation \(conversationId)")
-                audioManager?.enqueueAudioChunk(audioData)
+                audioManager?.playAudioChunkImmediately(audioData)
             } else {
                 print("Skipping audio chunk - conversation ID mismatch or missing data")
                 if let conversationId = message["conversation_id"] as? String {
@@ -301,13 +308,14 @@ class AppState: ObservableObject {
         case "audio_stream_end":
             if let conversationId = message["conversation_id"] as? String,
                conversationId == activeConversationId {
-                audioManager?.signalStreamEnded()
+                audioManager?.finishRealTimeAudioPlayback()
             }
             
         case "audio_stream_error":
             if let conversationId = message["conversation_id"] as? String,
                conversationId == activeConversationId,
                let error = message["error"] as? String {
+                print("🚨 RECEIVED audio_stream_error - CALLING stopAudioPlayback()")
                 stopAudioPlayback()
                 clearCurrentAssistantMessage()
                 lastError = "Audio stream error: \(error)"
@@ -316,6 +324,7 @@ class AppState: ObservableObject {
         case "barge_in_notification":
             if let conversationId = message["conversation_id"] as? String,
                conversationId == activeConversationId {
+                print("🚨 RECEIVED barge_in_notification - CALLING stopAudioPlayback()")
                 stopAudioPlayback()
                 clearCurrentAssistantMessage()
             }
@@ -331,21 +340,69 @@ class AppState: ObservableObject {
     }
     
     private func startAssistantMessage() {
-        currentAssistantMessageId = UUID()
-        let message = ChatMessage(type: .assistant, content: "", timestamp: Date())
-        chatMessages.append(message)
+        // CRITICAL FIX: Create message ID synchronously, then update UI on main thread
+        let messageId = UUID()
+        currentAssistantMessageId = messageId
+        
+        print("📝 Starting assistant message with ID: \(messageId)")
+        
+        // Ensure UI updates happen on main thread
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { 
+                print("📝 ERROR: Self is nil in startAssistantMessage")
+                return 
+            }
+            
+            // CRITICAL FIX: Use the messageId when creating the ChatMessage
+            let message = ChatMessage(id: messageId, type: .assistant, content: "", timestamp: Date())
+            self.chatMessages.append(message)
+            print("📝 Created assistant message in UI with ID: \(messageId). Total messages: \(self.chatMessages.count)")
+            
+            // Force UI update
+            self.objectWillChange.send()
+        }
     }
     
     private func appendToCurrentAssistantMessage(_ content: String) {
-        guard let messageId = currentAssistantMessageId,
-              let index = chatMessages.firstIndex(where: { $0.id == messageId }) else { return }
+        print("📝 Attempting to append '\(content)' to currentAssistantMessageId: \(currentAssistantMessageId?.uuidString ?? "nil")")
         
-        let updatedMessage = ChatMessage(
-            type: .assistant,
-            content: chatMessages[index].content + content,
-            timestamp: chatMessages[index].timestamp
-        )
-        chatMessages[index] = updatedMessage
+        // Ensure UI updates happen on main thread
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else {
+                print("📝 ERROR: Self is nil in appendToCurrentAssistantMessage")
+                return
+            }
+            
+            guard let messageId = self.currentAssistantMessageId else {
+                print("📝 ERROR: No currentAssistantMessageId set")
+                return
+            }
+            
+            guard let index = self.chatMessages.firstIndex(where: { $0.id == messageId }) else {
+                print("📝 ERROR: Could not find message with ID \(messageId) in \(self.chatMessages.count) messages")
+                for (i, msg) in self.chatMessages.enumerated() {
+                    print("📝   Message \(i): ID=\(msg.id), type=\(msg.type), content='\(msg.content.prefix(50))'")
+                }
+                return
+            }
+            
+            // Create a new ChatMessage with updated content using the SAME ID
+            let oldContent = self.chatMessages[index].content
+            let newContent = oldContent + content
+            let updatedMessage = ChatMessage(
+                id: messageId,  // CRITICAL FIX: Use the same messageId
+                type: .assistant,
+                content: newContent,
+                timestamp: self.chatMessages[index].timestamp
+            )
+            
+            // Replace the message in the array to trigger UI update
+            self.chatMessages[index] = updatedMessage
+            print("📝 Updated assistant message: '\(oldContent)' + '\(content)' = '\(newContent)'")
+            
+            // Force UI update by triggering objectWillChange
+            self.objectWillChange.send()
+        }
     }
     
     private func clearCurrentAssistantMessage() {

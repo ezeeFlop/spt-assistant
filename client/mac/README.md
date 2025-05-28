@@ -5,7 +5,7 @@ A native macOS menu bar application for the SPT Assistant voice AI system, featu
 ## Features
 
 - **Menu Bar Integration**: Lives in your menu bar for quick access
-- **Native Echo Cancellation**: Uses macOS built-in echo cancellation (similar to browser getUserMedia with echoCancellation: true)
+- **Advanced Echo Cancellation**: Uses macOS AVAudioEngine voice processing (equivalent to iOS setPreferredEchoCancellationInInput)
 - **Real-time Audio Processing**: 16kHz audio capture and playback with low latency
 - **Modern UI**: Beautiful SwiftUI interface following Apple's design guidelines
 - **Device Selection**: Choose input and output audio devices
@@ -39,20 +39,22 @@ A native macOS menu bar application for the SPT Assistant voice AI system, featu
 
 ## Echo Cancellation
 
-The application uses macOS's native echo cancellation system, which automatically prevents the assistant's voice from being picked up by the microphone. This is achieved through:
+The application uses **`setVoiceProcessingEnabled(true)`** on the AVAudioEngine input node, which is the macOS equivalent of iOS's `setPreferredEchoCancellationInInput(_:)`. This provides professional-grade echo cancellation that prevents the assistant's voice from being picked up by the microphone.
 
-- **AVAudioEngine**: Proper audio routing with simultaneous input/output
-- **System Integration**: Leveraging macOS built-in audio processing
-- **No Manual Processing**: The system handles echo cancellation automatically
+**Implementation Details:**
+- **Voice Processing**: Uses `inputNode.setVoiceProcessingEnabled(true)` 
+- **Real-time Echo Cancellation**: Automatically filters assistant voice from microphone input
+- **Barge-in Prevention**: Prevents false triggers during assistant speech
+- **Standard Apple API**: Uses the official Apple-recommended approach for voice applications
 
-This approach is equivalent to using `getUserMedia({ audio: { echoCancellation: true } })` in a web browser.
+This is the same technology used in professional VoIP applications and provides robust echo cancellation specifically designed for voice assistant use cases. The implementation follows Apple's WWDC 2019 guidance for voice processing in AVAudioEngine.
 
 ## Architecture
 
 The application follows modern SwiftUI patterns:
 
 - **AppState**: Centralized state management using `@ObservableObject`
-- **AudioManager**: Handles audio capture/playback with native echo cancellation
+- **AudioManager**: Handles audio capture/playback with AVAudioEngine voice processing
 - **WebSocketManager**: Manages WebSocket communication with the backend
 - **Views**: Modular SwiftUI views for different UI components
 
@@ -64,6 +66,7 @@ Default settings:
 - Channels: Mono
 - Audio Format: 16-bit PCM
 - Output Volume: 100%
+- Echo Cancellation: Enabled (voice processing)
 
 Settings are automatically saved to UserDefaults.
 
@@ -79,10 +82,17 @@ Settings are automatically saved to UserDefaults.
 2. Check the server URL in Settings
 3. Ensure WebSocket endpoint is accessible
 
-### Audio Issues
-1. Check audio device selection in Settings
-2. Verify output volume is not muted
-3. Try refreshing audio devices
+### Audio Issues / Echo Problems
+1. Check that voice processing is enabled in console logs
+2. Verify both input and output voice processing are active
+3. Try refreshing audio devices in Settings
+4. Restart the application to reinitialize audio engine
+
+### Echo Cancellation Not Working
+1. Look for "✅ Voice processing (echo cancellation) enabled" in console
+2. Ensure both input and output nodes show voice processing enabled
+3. If echo cancellation fails to initialize, the app falls back to system-level processing
+4. Restart the app if echo cancellation seems ineffective
 
 ## Development
 
@@ -97,7 +107,7 @@ SPTAssistant/
 │   ├── ChatView.swift         # Chat and recording interface
 │   └── SettingsView.swift     # Configuration interface
 └── Managers/
-    ├── AudioManager.swift     # Audio processing with echo cancellation
+    ├── AudioManager.swift     # Audio processing with voice processing echo cancellation
     └── WebSocketManager.swift # WebSocket communication
 ```
 

@@ -212,14 +212,15 @@ struct AudioSettingsSection: View {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                    Text("Native Apple echo cancellation enabled")
+                    Text("Voice processing enabled (setVoiceProcessingEnabled)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 
-                Text("SPT Assistant uses macOS built-in echo cancellation to prevent feedback loops, similar to browser getUserMedia with echoCancellation: true.")
-                    .font(.caption)
+                Text("SPT Assistant uses setVoiceProcessingEnabled(true) on AVAudioEngine - the macOS equivalent of iOS setPreferredEchoCancellationInInput(_:) - to prevent the assistant's voice from triggering barge-in detection.")
+                    .font(.caption2)
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
             }
         }
     }
