@@ -1,18 +1,39 @@
 # Service for interacting with Large Language Models (LLMs)
 import json
-from typing import AsyncIterator, Dict, List, Optional, Tuple, Union
+from typing import AsyncIterator, Dict, List, Optional, Tuple, Union, Any
 
 import litellm # Replaced OpenAI client with LiteLLM
 # from openai import AsyncOpenAI, OpenAIError # Using openai as an example client
 import httpx # For direct HTTP calls to Ollama for model management
 import asyncio # Added for asyncio.Event
+import structlog
 
 from llm_orchestrator_worker.config import orchestrator_settings
 from llm_orchestrator_worker.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Define a common structure for conversation history messages
+# Register ollama models that support native function calling
+# This prevents LiteLLM from falling back to JSON mode
+litellm.register_model({
+    "ollama/llama3.1": {
+        "supports_function_calling": True
+    },
+    "ollama_chat/llama3.1": {
+        "supports_function_calling": True
+    },
+    "ollama/llama3-groq-tool-use": {
+        "supports_function_calling": True
+    },
+    "ollama_chat/llama3-groq-tool-use": {
+        "supports_function_calling": True
+    }
+})
+
+# Verify registration worked
+logger.info(f"Function calling support check for ollama/llama3-groq-tool-use: {litellm.supports_function_calling('ollama/llama3-groq-tool-use')}")
+logger.info(f"Function calling support check for ollama_chat/llama3-groq-tool-use: {litellm.supports_function_calling('ollama_chat/llama3-groq-tool-use')}")
+
 class Message(Dict):
     role: str # "system", "user", "assistant", "tool"
     content: Optional[str] = None
@@ -123,6 +144,7 @@ class LLMService:
         self,
         conversation_id: str, # Added conversation_id for cancellation
         conversation_history: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,  # Add tools parameter
         model_name_override: Optional[str] = None,
         temperature_override: Optional[float] = None,
         max_tokens_override: Optional[int] = None,
@@ -146,7 +168,7 @@ class LLMService:
             "temperature": current_temperature,
             "max_tokens": current_max_tokens,
             "stream": True,
-            # "tools": example_tools, # FR-06: Pass tool definitions
+            "tools": tools,
             # "tool_choice": "auto"  # FR-06: Let LLM decide if it needs tools
         }
 
@@ -163,19 +185,23 @@ class LLMService:
 
         # A more robust way to handle model prefixing for LiteLLM:
         if effective_provider == "ollama":
-             # Reverting to "ollama/" prefix due to TypeError with "ollama_chat/"
-             # The TypeError: "sequence item X: expected str instance, NoneType found" in litellm.llms.ollama_chat.py
-             # needs to be addressed in LiteLLM. For now, revert to the previous prefix.
-             if not current_model_name.startswith("ollama/"): 
-                model_name_for_ollama = current_model_name.replace("ollama_chat/", "") # Remove chat prefix if present
-                llm_call_params["model"] = f"ollama/{model_name_for_ollama}"
-             else: # It already starts with ollama/ (or was an un-prefixed name now default prefixed)
-                llm_call_params["model"] = current_model_name # Ensure it is set correctly if already prefixed
+             # Handle both ollama/ and ollama_chat/ prefixes
+             if current_model_name.startswith("ollama_chat/"):
+                # Already has the correct prefix for chat API, use as-is
+                llm_call_params["model"] = current_model_name
+             elif not current_model_name.startswith("ollama/"): 
+                # No prefix, add ollama/ prefix (for generate API)
+                llm_call_params["model"] = f"ollama/{current_model_name}"
+             else: 
+                # Already has ollama/ prefix, use as-is
+                llm_call_params["model"] = current_model_name
 
              # ensure_model_is_pulled=True was not effective, using manual check and pull
              # llm_call_params["ensure_model_is_pulled"] = True 
              if effective_api_base: # Make sure we have a base URL for Ollama
-                await self._ensure_ollama_model_available(current_model_name, effective_api_base)
+                # Extract the plain model name for Ollama API calls
+                plain_model_name = current_model_name.replace("ollama_chat/", "").replace("ollama/", "")
+                await self._ensure_ollama_model_available(plain_model_name, effective_api_base)
              else:
                 logger.warning(f"Ollama provider selected but no OLLAMA_BASE_URL configured. Model pulling and completions may fail for '{current_model_name}'.")
 
@@ -194,44 +220,24 @@ class LLMService:
         cancellation_event = self._get_cancellation_event(conversation_id)
         cancellation_event.clear() # Clear event at the start of new generation
 
-        # TODO: Load actual tool definitions based on conversation_id or global config
-        # These would come from MCP client capabilities, translated to LLM tool format.
-        # Example tool schema (OpenAI format):
-        example_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "description": "Get the current weather in a given location",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "location": {
-                                "type": "string",
-                                "description": "The city and state, e.g. San Francisco, CA",
-                            },
-                            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
-                        },
-                        "required": ["location"],
-                    },
-                },
-            }
-        ]
-        # End TODO for tool definitions
-
         logger.debug(f"Generating LLM response for conv_id {conversation_id} using LiteLLM with params: {llm_call_params}")
         logger.debug(f"Conversation history for LLM ({conversation_id}): {conversation_history}")
-
+        if tools:
+            logger.info(f"LLM using {len(tools)} tools for conversation {conversation_id}: {[t['function']['name'] for t in tools]}")
+            # Debug: Check function calling support for the actual model being used
+            actual_model = llm_call_params["model"]
+            logger.info(f"Checking function calling support for actual model being used: {actual_model}")
+            logger.info(f"Function calling support for {actual_model}: {litellm.supports_function_calling(actual_model)}")
+            logger.info(f"LiteLLM call params: {llm_call_params}")
 
         _tool_call_assembler: Dict[int, Dict[str, any]] = {} # index -> {id, type, function_name, function_args_buffer}
         _tool_calls_yielded_this_turn: set[str] = set() # Store IDs of tool calls yielded during this assistant turn
 
         try:
-            # LiteLLM's acompletion is a drop-in for OpenAI's
-            # It requires 'tools' and 'tool_choice' to be passed directly if used.
-            #if example_tools: # Only add if tools are defined
-            #    llm_call_params["tools"] = example_tools
-            #    llm_call_params["tool_choice"] = "auto"
+            # Configure tools if provided
+            if tools:
+                llm_call_params["tools"] = tools
+                llm_call_params["tool_choice"] = "auto"
 
             response_stream:litellm.ModelResponseStream = await litellm.acompletion(**llm_call_params)
             
@@ -290,9 +296,11 @@ class LLMService:
                            assembled_call["id"] not in _tool_calls_yielded_this_turn:
                             
                             # Attempt to parse arguments if they are supposed to be JSON
+                            # But keep them as strings for OpenAI compatibility
                             try:
-                                parsed_args = json.loads(assembled_call["function"]["arguments"])
-                                assembled_call["function"]["arguments"] = parsed_args
+                                # Validate that arguments are valid JSON, but keep as string
+                                json.loads(assembled_call["function"]["arguments"])
+                                # Arguments are valid JSON - keep as string for OpenAI compatibility
                             except json.JSONDecodeError:
                                 # If arguments are not valid JSON, pass them as a raw string.
                                 # This might happen if the LLM doesn't format them correctly or if they aren't meant to be JSON.

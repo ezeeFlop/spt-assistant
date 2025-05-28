@@ -112,10 +112,10 @@ struct AudioDeviceSection: View {
                 Picker("Input Device", selection: Binding(
                     get: { appState.selectedInputDevice?.id ?? "" },
                     set: { deviceId in
-                        appState.selectedInputDevice = appState.availableInputDevices.first { $0.id == deviceId }
+                        appState.selectedInputDevice = appState.inputDevices.first { $0.id == deviceId }
                     }
                 )) {
-                    ForEach(appState.availableInputDevices, id: \.id) { device in
+                    ForEach(appState.inputDevices, id: \.id) { device in
                         HStack {
                             Text(device.name)
                             if device.isDefault {
@@ -138,10 +138,10 @@ struct AudioDeviceSection: View {
                 Picker("Output Device", selection: Binding(
                     get: { appState.selectedOutputDevice?.id ?? "" },
                     set: { deviceId in
-                        appState.selectedOutputDevice = appState.availableOutputDevices.first { $0.id == deviceId }
+                        appState.selectedOutputDevice = appState.outputDevices.first { $0.id == deviceId }
                     }
                 )) {
-                    ForEach(appState.availableOutputDevices, id: \.id) { device in
+                    ForEach(appState.outputDevices, id: \.id) { device in
                         HStack {
                             Text(device.name)
                             if device.isDefault {

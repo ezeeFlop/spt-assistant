@@ -69,12 +69,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    @objc func quitApp() {
+    @MainActor @objc func quitApp() {
         appState.cleanup()
         NSApplication.shared.terminate(nil)
     }
     
-    private func requestMicrophonePermissions() {
+    @MainActor private func requestMicrophonePermissions() {
         // Request microphone permissions using AVCaptureDevice for macOS
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -82,6 +82,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             appState.microphonePermissionGranted = true
         case .denied, .restricted:
             print("Microphone permission denied")
+            appState.microphonePermissionGranted = false
             showMicrophonePermissionAlert()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { granted in
@@ -91,12 +92,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         self.appState.microphonePermissionGranted = true
                     } else {
                         print("Microphone permission denied")
+                        self.appState.microphonePermissionGranted = false
                         self.showMicrophonePermissionAlert()
                     }
                 }
             }
         @unknown default:
-            break
+            appState.microphonePermissionGranted = false
         }
     }
     

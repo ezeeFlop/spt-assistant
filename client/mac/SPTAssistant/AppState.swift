@@ -9,6 +9,11 @@
 import Foundation
 import SwiftUI
 import Combine
+import CoreGraphics
+import ImageIO
+import AppKit
+import UniformTypeIdentifiers
+import AVFoundation
 
 // MARK: - Data Models
 
@@ -36,6 +41,7 @@ struct ChatMessage: Identifiable, Codable {
 
 // MARK: - App State
 
+@MainActor
 class AppState: ObservableObject {
     
     // MARK: - Connection State
@@ -56,8 +62,8 @@ class AppState: ObservableObject {
     @Published var activeConversationId: String?
     
     // MARK: - Audio Device Settings
-    @Published var availableInputDevices: [AudioDevice] = []
-    @Published var availableOutputDevices: [AudioDevice] = []
+    @Published var inputDevices: [AudioDevice] = []
+    @Published var outputDevices: [AudioDevice] = []
     @Published var selectedInputDevice: AudioDevice?
     @Published var selectedOutputDevice: AudioDevice?
     @Published var outputVolume: Float = 1.0
@@ -66,9 +72,15 @@ class AppState: ObservableObject {
     @Published var lastError: String?
     @Published var microphonePermissionGranted = false
     
+    // MARK: - Tool State (Phase 1)
+    @Published var isToolExecuting = false
+    @Published var lastToolResult: String?
+    @Published var lastToolError: String?
+    
     // MARK: - Managers
     private var audioManager: AudioManager?
     private var webSocketManager: WebSocketManager?
+    private var clientToolManager = ClientToolManager()
     
     // MARK: - Cancellables
     private var cancellables = Set<AnyCancellable>()
@@ -124,7 +136,7 @@ class AppState: ObservableObject {
         
         // Setup message handling
         webSocketManager?.onMessageReceived = { [weak self] message in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self?.handleWebSocketMessage(message)
             }
         }
@@ -140,6 +152,25 @@ class AppState: ObservableObject {
                 self?.clearCurrentAssistantMessage()
             }
         }
+        
+        // Set up ClientToolManager
+        clientToolManager.setWebSocketManager(webSocketManager!)
+        
+        // Observe tool execution state
+        clientToolManager.$isToolExecuting
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isToolExecuting, on: self)
+            .store(in: &cancellables)
+        
+        clientToolManager.$lastToolResult
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.lastToolResult, on: self)
+            .store(in: &cancellables)
+        
+        clientToolManager.$lastToolError
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.lastToolError, on: self)
+            .store(in: &cancellables)
     }
     
     // MARK: - Public Methods
@@ -184,8 +215,8 @@ class AppState: ObservableObject {
     func refreshAudioDevices() {
         audioManager?.refreshAudioDevices { [weak self] inputDevices, outputDevices in
             DispatchQueue.main.async {
-                self?.availableInputDevices = inputDevices
-                self?.availableOutputDevices = outputDevices
+                self?.inputDevices = inputDevices
+                self?.outputDevices = outputDevices
                 
                 // Set default devices if none selected
                 if self?.selectedInputDevice == nil {
@@ -231,6 +262,9 @@ class AppState: ObservableObject {
                 clearChat()
                 stopAudioPlayback()
                 print("Conversation started with ID: \(conversationId)")
+                
+                // Register client capabilities with the ClientToolManager
+                clientToolManager.registerCapabilities(conversationId: conversationId)
             }
             
         case "partial_transcript":
@@ -329,10 +363,24 @@ class AppState: ObservableObject {
                 clearCurrentAssistantMessage()
             }
             
+        // Delegate tool requests to ClientToolManager
+        case "tool_request":
+            if let conversationId = message["conversation_id"] as? String,
+               conversationId == activeConversationId {
+                print("🔧 Received tool request for conversation \(conversationId) - delegating to ClientToolManager")
+                clientToolManager.handleToolRequest(message)
+            } else {
+                print("🔧 Ignoring tool request for different conversation: \(message["conversation_id"] as? String ?? "none") (active: \(activeConversationId ?? "none"))")
+            }
+            
         default:
             print("Unknown message type: \(messageType)")
         }
     }
+    
+    // MARK: - Tool handling is now delegated to ClientToolManager
+    // All tool implementations (takeScreenshot, launchApplication, getSystemInfo) 
+    // have been moved to ClientToolManager.swift for better separation of concerns
     
     private func addChatMessage(type: ChatMessage.MessageType, content: String) {
         let message = ChatMessage(type: type, content: content, timestamp: Date())
@@ -417,11 +465,12 @@ class AppState: ObservableObject {
         outputVolume = defaults.float(forKey: "outputVolume")
         if outputVolume == 0 { outputVolume = 1.0 } // Default value
         
-        if let inputDeviceId = defaults.string(forKey: "selectedInputDeviceId") {
-            // Will be set when devices are refreshed
+        // Load audio device preferences (just check if they exist)
+        if defaults.string(forKey: "selectedInputDeviceId") != nil {
+            // Input device preference exists
         }
-        if let outputDeviceId = defaults.string(forKey: "selectedOutputDeviceId") {
-            // Will be set when devices are refreshed
+        if defaults.string(forKey: "selectedOutputDeviceId") != nil {
+            // Output device preference exists
         }
     }
     

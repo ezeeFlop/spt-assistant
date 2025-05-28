@@ -3,7 +3,7 @@
 import json
 import asyncio
 import time
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, List
 import redis.asyncio as redis
 from llm_orchestrator_worker.config import orchestrator_settings
 from llm_orchestrator_worker.logging_config import get_logger
@@ -225,6 +225,44 @@ class ToolRouter:
                 "name": tool_name,
                 "content": json.dumps({"error": f"An unexpected error occurred while executing tool '{tool_name}'."})
             }
+
+    def get_client_tools_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """Get client tools for a conversation in LLM-compatible format."""
+        if conversation_id not in self.client_capabilities:
+            return []
+        
+        capabilities = self.client_capabilities[conversation_id]["capabilities"]
+        llm_tools = []
+        
+        for tool_name, tool_info in capabilities.items():
+            # Convert client tool info to LLM tool format (OpenAI format)
+            # The client sends parameters in the format: {"type": "object", "properties": {...}, "required": [...]}
+            parameters = tool_info.get("parameters", {})
+            
+            # Handle both old and new parameter formats for backward compatibility
+            if isinstance(parameters, dict) and "properties" in parameters:
+                # New format: parameters already contains type, properties, required
+                tool_parameters = parameters
+            else:
+                # Old format: parameters IS the properties
+                tool_parameters = {
+                    "type": "object",
+                    "properties": parameters,
+                    "required": tool_info.get("required", [])
+                }
+            
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": tool_info.get("description", f"Execute {tool_name} on the client"),
+                    "parameters": tool_parameters
+                }
+            }
+            llm_tools.append(tool_def)
+        
+        logger.info(f"Generated {len(llm_tools)} LLM tool definitions for conversation {conversation_id}")
+        return llm_tools
 
     def cleanup_expired_requests(self, max_age_seconds: int = 300):
         """Clean up expired pending tool requests."""

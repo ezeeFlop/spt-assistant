@@ -29,10 +29,10 @@ class OrchestratorSettings(BaseSettings):
     CONVERSATION_DATA_TTL_SECONDS: int = 24 * 60 * 60 # TTL for conversation data in Redis (e.g., 1 day)
 
     # LLM Settings (FR-05)
-    LLM_PROVIDER: str = "ollama" # e.g., "openai", "anthropic", "ollama"
+    LLM_PROVIDER: str = "openai" # e.g., "openai", "anthropic", "ollama"
     LLM_API_KEY: Optional[str] = "your_openai_api_key_here" # Keep sensitive keys out of code
-    LLM_MODEL_NAME: str = "gemma3" # Default model
-    LLM_BASE_URL: Optional[str] = "http://localhost:11434" # For self-hosted LLMs like Ollama or VLLM
+    LLM_MODEL_NAME: str = "gpt-4o" # OpenAI model with native function calling support
+    LLM_BASE_URL: Optional[str] = None # Not needed for OpenAI
     LLM_MAX_TOKENS: int = 1000
     
     LLM_TEMPERATURE: float = 0.7

@@ -158,6 +158,54 @@ struct RecordingControlsView: View {
                 .padding(.horizontal)
             }
             
+            // Phase 1: Tool execution status
+            if appState.isToolExecuting {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Executing tool...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal)
+            }
+            
+            // Phase 1: Tool result display
+            if let toolResult = appState.lastToolResult {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("Tool completed successfully")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Dismiss") {
+                        appState.lastToolResult = nil
+                    }
+                    .font(.caption)
+                }
+                .padding(.horizontal)
+            }
+            
+            // Phase 1: Tool error display
+            if let toolError = appState.lastToolError {
+                HStack {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                    Text("Tool error: \(toolError)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("Dismiss") {
+                        appState.lastToolError = nil
+                    }
+                    .font(.caption)
+                }
+                .padding(.horizontal)
+            }
+            
             // Recording Button
             HStack {
                 Spacer()

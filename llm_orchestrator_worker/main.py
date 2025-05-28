@@ -141,9 +141,13 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
             logger.warning("NLTK 'punkt' tokenizer not available during LLM interaction. TTS will be sent at the end of the full response if no tool calls are made, or not at all for intermediate text before tool calls if 'punkt' is missing.")
             punkt_available = False
         
+        # Get available client tools for this conversation
+        available_tools = tool_router.get_client_tools_for_conversation(conversation_id)
+        
         async for response_part in llm_service.generate_response_stream(
             conversation_id, # Pass conversation_id
             history,
+            tools=available_tools,  # Pass client tools
             model_name_override=current_llm_model,
             temperature_override=current_temperature,
             max_tokens_override=current_max_tokens

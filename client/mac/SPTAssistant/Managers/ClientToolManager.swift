@@ -138,8 +138,7 @@ public class ClientToolManager: ObservableObject {
     
     func setWebSocketManager(_ manager: WebSocketManager) {
         self.webSocketManager = manager
-        setupToolRequestListener()
-        registerCapabilities()
+        print("ClientToolManager: WebSocket manager set")
     }
     
     func getAvailableTools() -> [String: Any] {
@@ -155,6 +154,12 @@ public class ClientToolManager: ObservableObject {
                             "type": param.type,
                             "description": param.description
                         ]
+                        
+                        // Add items property for array types (required by OpenAI JSON Schema)
+                        if param.type == "array" {
+                            paramDict["items"] = ["type": "string"]  // file_types is array of strings
+                        }
+                        
                         if let defaultValue = param.defaultValue {
                             paramDict["default"] = defaultValue
                         }
@@ -172,7 +177,10 @@ public class ClientToolManager: ObservableObject {
     
     func registerCapabilities(conversationId: String) {
         // Register capabilities for a specific conversation
-        guard let webSocketManager = webSocketManager else { return }
+        guard let webSocketManager = webSocketManager else { 
+            print("ClientToolManager: Cannot register capabilities - no WebSocket manager")
+            return 
+        }
         
         let capabilities = getAvailableTools()
         let registrationMessage: [String: Any] = [
@@ -185,7 +193,7 @@ public class ClientToolManager: ObservableObject {
         ]
         
         webSocketManager.sendJSONMessage(registrationMessage)
-        print("Registered client capabilities for conversation \(conversationId): \(Array(capabilities.keys))")
+        print("ClientToolManager: Registered capabilities for conversation \(conversationId): \(Array(capabilities.keys))")
     }
     
     func handleToolRequest(_ message: [String: Any]) {
@@ -193,13 +201,13 @@ public class ClientToolManager: ObservableObject {
         guard let toolCallId = message["tool_call_id"] as? String,
               let toolName = message["tool_name"] as? String,
               let conversationId = message["conversation_id"] as? String else {
-            print("Invalid tool request format")
+            print("ClientToolManager: Invalid tool request format")
             return
         }
         
         let argumentsString = message["arguments"] as? String ?? "{}"
         
-        print("Received tool request: \(toolName) for conversation \(conversationId)")
+        print("ClientToolManager: Received tool request: \(toolName) for conversation \(conversationId)")
         
         Task {
             await executeToolRequest(
@@ -211,78 +219,7 @@ public class ClientToolManager: ObservableObject {
         }
     }
     
-    // Method expected by AppState
-    func executeToolCall(
-        toolCallId: String,
-        toolName: String,
-        arguments: [String: Any],
-        conversationId: String
-    ) async -> [String: Any]? {
-        var result: [String: Any]
-        var success = false
-        
-        do {
-            // Execute the appropriate tool
-            switch toolName {
-            case "take_screenshot":
-                result = await executeTakeScreenshot(args: arguments)
-                success = true
-                
-            case "open_application":
-                result = await executeOpenApplication(args: arguments)
-                success = true
-                
-            case "search_files":
-                result = await executeSearchFiles(args: arguments)
-                success = true
-                
-            default:
-                result = ["error": "Unknown tool: \(toolName)"]
-                success = false
-            }
-            
-        } catch {
-            result = ["error": "Failed to execute tool: \(error.localizedDescription)"]
-            success = false
-        }
-        
-        // Send response back to server
-        await sendToolResponse(
-            toolCallId: toolCallId,
-            conversationId: conversationId,
-            success: success,
-            result: result
-        )
-        
-        return result
-    }
-    
     // MARK: - Private Methods
-    
-    private func setupToolRequestListener() {
-        // The WebSocketManager will call handleToolRequest directly when tool requests are received
-        // This is handled in ContentView.swift setupIntegration()
-        print("Tool request listener setup - will be handled via ContentView integration")
-    }
-    
-    private func registerCapabilities() {
-        guard let webSocketManager = webSocketManager else { return }
-        
-        let capabilities = getAvailableTools()
-        let registrationMessage: [String: Any] = [
-            "type": "client_capabilities",
-            "client_id": clientId,
-            "platform": platform,
-            "capabilities": capabilities,
-            "timestamp": Date().timeIntervalSince1970
-        ]
-        
-        if let jsonData = try? JSONSerialization.data(withJSONObject: registrationMessage),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            webSocketManager.sendJSONMessage(registrationMessage)
-            print("Registered client capabilities: \(Array(capabilities.keys))")
-        }
-    }
     
     private func executeToolRequest(
         toolCallId: String,
@@ -290,6 +227,10 @@ public class ClientToolManager: ObservableObject {
         arguments: String,
         conversationId: String
     ) async {
+        await MainActor.run {
+            isToolExecuting = true
+        }
+        
         var result: [String: Any]
         var success = false
         
@@ -298,19 +239,21 @@ public class ClientToolManager: ObservableObject {
             let argumentsData = arguments.data(using: .utf8) ?? Data()
             let args = try JSONSerialization.jsonObject(with: argumentsData) as? [String: Any] ?? [:]
             
+            print("ClientToolManager: Executing \(toolName) with args: \(args)")
+            
             // Execute the appropriate tool
             switch toolName {
             case "take_screenshot":
                 result = await executeTakeScreenshot(args: args)
-                success = true
+                success = result["error"] == nil
                 
             case "open_application":
                 result = await executeOpenApplication(args: args)
-                success = true
+                success = result["error"] == nil
                 
             case "search_files":
                 result = await executeSearchFiles(args: args)
-                success = true
+                success = result["error"] == nil
                 
             default:
                 result = ["error": "Unknown tool: \(toolName)"]
@@ -322,7 +265,18 @@ public class ClientToolManager: ObservableObject {
             success = false
         }
         
-        // Send response back to server
+        await MainActor.run {
+            isToolExecuting = false
+            if success {
+                lastToolResult = String(describing: result)
+                lastToolError = nil
+            } else {
+                lastToolResult = nil
+                lastToolError = result["error"] as? String ?? "Unknown error"
+            }
+        }
+        
+        // Send response back to server in the exact format expected by the LLM orchestrator
         await sendToolResponse(
             toolCallId: toolCallId,
             conversationId: conversationId,
@@ -337,6 +291,7 @@ public class ClientToolManager: ObservableObject {
         success: Bool,
         result: [String: Any]
     ) async {
+        // Format response exactly as expected by the LLM orchestrator worker
         let response: [String: Any] = [
             "type": "tool_response",
             "tool_call_id": toolCallId,
@@ -346,8 +301,10 @@ public class ClientToolManager: ObservableObject {
             "timestamp": Date().timeIntervalSince1970
         ]
         
-        webSocketManager?.sendJSONMessage(response)
-        print("Sent tool response for \(toolCallId): success=\(success)")
+        await MainActor.run {
+            webSocketManager?.sendJSONMessage(response)
+        }
+        print("ClientToolManager: Sent tool response for \(toolCallId): success=\(success)")
     }
     
     // MARK: - Tool Implementations
