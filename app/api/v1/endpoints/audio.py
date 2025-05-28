@@ -24,28 +24,53 @@ async def receive_audio_from_client(
     websocket: WebSocket, conversation_id: str, redis_service_instance: RedisService
 ):
     """
-    Receives audio bytes from the client, packages them with conversation_id,
-    and publishes to AUDIO_STREAM_CHANNEL.
-    Client is expected to send audio data as raw PCM, 16-bit signed
-    little-endian (s16le), 16kHz, 1-channel audio. (FR-01)
+    Receives audio bytes and JSON messages from the client.
+    - Binary data: Audio data as raw PCM, 16-bit signed little-endian (s16le), 16kHz, 1-channel
+    - JSON messages: Client capabilities, tool responses, etc.
     """
     try:
         while True:
-            data = await websocket.receive_bytes()
-            if not data:
-                logger.info(f"Receive_audio: Received empty bytes from client for conv_id {conversation_id}.")
-                continue
-            
-            logger.debug(f"Gateway received {len(data)} bytes of audio data for conv_id {conversation_id}.")
-            audio_message = {
-                "conversation_id": conversation_id,
-                "audio_data": data.hex() # Sending bytes as hex string in JSON
-            }
+            # Try to receive as text first (for JSON messages)
             try:
-                await redis_service_instance.publish_message(settings.AUDIO_STREAM_CHANNEL, json.dumps(audio_message))
-                logger.debug(f"Gateway published audio message to {settings.AUDIO_STREAM_CHANNEL} for conv_id {conversation_id}")
-            except Exception as e:
-                logger.error(f"Gateway: Failed to publish audio data to Redis for conv_id {conversation_id}: {e}", exc_info=True)
+                text_data = await websocket.receive_text()
+                # Handle JSON message
+                try:
+                    message_data = json.loads(text_data)
+                    message_type = message_data.get("type")
+                    
+                    if message_type == "client_capabilities":
+                        await handle_client_capability_registration(message_data, conversation_id, redis_service_instance)
+                    elif message_type == "tool_response":
+                        await handle_client_tool_response(message_data, redis_service_instance)
+                    else:
+                        logger.warning(f"Gateway: Unknown JSON message type '{message_type}' for conv_id {conversation_id}")
+                        
+                except json.JSONDecodeError:
+                    logger.warning(f"Gateway: Received invalid JSON from client for conv_id {conversation_id}: {text_data[:100]}")
+                    
+            except Exception:
+                # If text receive fails, try binary (audio data)
+                try:
+                    data = await websocket.receive_bytes()
+                    if not data:
+                        logger.info(f"Receive_audio: Received empty bytes from client for conv_id {conversation_id}.")
+                        continue
+                    
+                    logger.debug(f"Gateway received {len(data)} bytes of audio data for conv_id {conversation_id}.")
+                    audio_message = {
+                        "conversation_id": conversation_id,
+                        "audio_data": data.hex() # Sending bytes as hex string in JSON
+                    }
+                    try:
+                        await redis_service_instance.publish_message(settings.AUDIO_STREAM_CHANNEL, json.dumps(audio_message))
+                        logger.debug(f"Gateway published audio message to {settings.AUDIO_STREAM_CHANNEL} for conv_id {conversation_id}")
+                    except Exception as e:
+                        logger.error(f"Gateway: Failed to publish audio data to Redis for conv_id {conversation_id}: {e}", exc_info=True)
+                        
+                except Exception as e:
+                    logger.error(f"Gateway: Error receiving data from client for conv_id {conversation_id}: {e}", exc_info=True)
+                    break
+                    
     except WebSocketDisconnect:
         logger.info(f"receive_audio_from_client: WebSocket disconnected for conv_id {conversation_id}.")
     except Exception as e:
@@ -421,6 +446,9 @@ async def websocket_audio_endpoint(websocket: WebSocket):
         barge_in_task = asyncio.create_task(forward_barge_in_notifications_to_client(websocket, conversation_id))
         all_managed_tasks.append(barge_in_task)
         
+        client_tool_request_task = asyncio.create_task(forward_client_tool_requests_to_client(websocket, conversation_id))
+        all_managed_tasks.append(client_tool_request_task)
+        
         logger.info(f"Gateway: All ({len(all_managed_tasks)}) listener tasks created for conv_id {conversation_id}.")
         done, pending = await asyncio.wait(all_managed_tasks, return_when=asyncio.FIRST_COMPLETED)
         
@@ -489,4 +517,96 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                  logger.warning(f"Gateway: Tried to close already closed/broken WebSocket for conv_id {conversation_id}.")
             except Exception as e_close:
                 logger.error(f"Gateway: Error during server-side close for conv_id {conversation_id}: {e_close}", exc_info=True)
-        logger.info(f"Gateway: WebSocket connection fully processed for conv_id {conversation_id}.") 
+        logger.info(f"Gateway: WebSocket connection fully processed for conv_id {conversation_id}.")
+
+# Client capability and tool response handlers
+async def handle_client_capability_registration(message_data: Dict[str, Any], conversation_id: str, redis_service: RedisService):
+    """Handle client capability registration messages."""
+    try:
+        client_id = message_data.get("client_id")
+        platform = message_data.get("platform")
+        capabilities = message_data.get("capabilities", {})
+        
+        if not client_id or not platform:
+            logger.warning(f"Gateway: Invalid client capability registration for conv_id {conversation_id}")
+            return
+        
+        # Publish to LLM orchestrator for tool registration
+        registration_event = {
+            "type": "client_capability_registration",
+            "conversation_id": conversation_id,
+            "client_id": client_id,
+            "platform": platform,
+            "capabilities": capabilities,
+            "timestamp": time.time()
+        }
+        
+        await redis_service.publish_message(
+            settings.CLIENT_CAPABILITIES_CHANNEL,
+            json.dumps(registration_event)
+        )
+        
+        logger.info(f"Gateway: Registered client capabilities for conv_id {conversation_id}: {list(capabilities.keys())}")
+        
+    except Exception as e:
+        logger.error(f"Gateway: Error handling client capability registration for conv_id {conversation_id}: {e}", exc_info=True)
+
+async def handle_client_tool_response(message_data: Dict[str, Any], redis_service: RedisService):
+    """Handle client tool response messages."""
+    try:
+        tool_call_id = message_data.get("tool_call_id")
+        if not tool_call_id:
+            logger.warning("Gateway: Client tool response missing tool_call_id")
+            return
+        
+        # Forward to LLM orchestrator
+        await redis_service.publish_message(
+            settings.CLIENT_TOOL_RESPONSE_CHANNEL,
+            json.dumps(message_data)
+        )
+        
+        logger.info(f"Gateway: Forwarded client tool response for tool_call_id {tool_call_id}")
+        
+    except Exception as e:
+        logger.error(f"Gateway: Error handling client tool response: {e}", exc_info=True)
+
+async def forward_client_tool_requests_to_client(websocket: WebSocket, conversation_id: str):
+    """Subscribes to Redis client tool request channel and forwards tool requests to client if conversation_id matches."""
+    pubsub_client: Any = None
+    try:
+        r_client = await redis_service.get_redis_client()
+        pubsub_client = r_client.pubsub()
+        await pubsub_client.subscribe(settings.CLIENT_TOOL_REQUEST_CHANNEL)
+        logger.info(f"Gateway subscribed to {settings.CLIENT_TOOL_REQUEST_CHANNEL} for conv_id {conversation_id}")
+        
+        while True:
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.warning(f"Forward_client_tool_requests: WS no longer connected for conv_id {conversation_id}.")
+                break
+            
+            message = await pubsub_client.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            if message and message["type"] == "message":
+                payload_str = message["data"].decode('utf-8')
+                try:
+                    payload_json = json.loads(payload_str)
+                    if payload_json.get("conversation_id") == conversation_id:
+                        # Forward tool request to client
+                        await websocket.send_json(payload_json)
+                        logger.info(f"Gateway forwarded client tool request to client for conv_id {conversation_id}: {payload_json.get('tool_name')} (call_id: {payload_json.get('tool_call_id')})")
+                    # else: No need to log ignored messages for other conversations
+                except json.JSONDecodeError as e:
+                    logger.error(f"Gateway: Error decoding client tool request JSON from Redis: {e} - Data: {payload_str} for conv_id {conversation_id}")
+                except Exception as e:
+                    logger.error(f"Gateway: Error processing/forwarding client tool request for conv_id {conversation_id}: {e}", exc_info=True)
+            elif message is None:
+                await asyncio.sleep(0.01)
+    except Exception as e:
+        logger.error(f"Forward_client_tool_requests: Unexpected error for conv_id {conversation_id}: {e}", exc_info=True)
+    finally:
+        if pubsub_client:
+            try:
+                await pubsub_client.unsubscribe(settings.CLIENT_TOOL_REQUEST_CHANNEL)
+                await pubsub_client.close()
+            except Exception as e_cleanup:
+                logger.error(f"Forward_client_tool_requests: Error during pubsub cleanup for conv_id {conversation_id}: {e_cleanup}", exc_info=True)
+        logger.info(f"forward_client_tool_requests_to_client: Stopped for conv_id {conversation_id}") 

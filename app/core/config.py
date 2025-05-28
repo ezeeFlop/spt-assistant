@@ -28,4 +28,11 @@ class Settings(BaseSettings):
     # Environment file settings
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Client tool channels for macOS and other client-specific tools
+    CLIENT_TOOL_REQUEST_CHANNEL: str = "client_tool_request"    # Channel to send tool requests to clients
+    CLIENT_TOOL_RESPONSE_CHANNEL: str = "client_tool_response"  # Channel to receive tool responses from clients
+    CLIENT_CAPABILITIES_CHANNEL: str = "client_capabilities"    # Channel for client capability registration
+    
+    # Conversation and history management
+
 settings = Settings() 

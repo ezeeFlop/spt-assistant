@@ -232,7 +232,7 @@ async def process_llm_interaction(transcript_data: Dict, llm_service: LLMService
                 logger.error(f"Tool call request missing function name for conv_id '{conversation_id}': {tool_call_request}")
                 tool_results.append(Message(tool_call_id=tool_call_id, role="tool", name="unknown", content=json.dumps({"error": "Missing tool name."})))
                 continue
-            tool_dispatch_result = await tool_router.dispatch_tool_call(tool_call_id, tool_name, tool_args_str)
+            tool_dispatch_result = await tool_router.dispatch_tool_call(tool_call_id, tool_name, tool_args_str, conversation_id)
             tool_results.append(Message(**tool_dispatch_result))
             tool_status_msg = {
                 "type": "tool", "name": tool_name, 
@@ -399,6 +399,61 @@ async def subscribe_to_connection_events(redis_client: redis.Redis, llm_service:
     await pubsub.close()
     logger.info(f"LLM Orchestrator: Unsubscribed and closed pubsub for connection events channel: {orchestrator_settings.CONNECTION_EVENTS_CHANNEL}.")
 
+async def subscribe_to_client_capabilities(redis_client: redis.Redis, tool_router: ToolRouter):
+    """
+    Subscribes to client capabilities channel to handle client tool registrations.
+    This allows the orchestrator to register client-specific tools for use in conversations.
+    """
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(orchestrator_settings.CLIENT_CAPABILITIES_CHANNEL)
+    logger.info(f"LLM Orchestrator subscribed to client capabilities channel: {orchestrator_settings.CLIENT_CAPABILITIES_CHANNEL}")
+
+    global running
+    while running:
+        try:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            if message and message["type"] == "message":
+                message_data_str = message["data"].decode('utf-8')
+                logger.debug(f"LLM Orchestrator: Received client capability event: {message_data_str}")
+                
+                try:
+                    event_data = json.loads(message_data_str)
+                    event_type = event_data.get("type")
+                    
+                    if event_type == "client_capability_registration":
+                        conversation_id = event_data.get("conversation_id")
+                        client_id = event_data.get("client_id")
+                        platform = event_data.get("platform")
+                        capabilities = event_data.get("capabilities", {})
+                        
+                        if conversation_id and client_id and platform:
+                            tool_router.register_client_capabilities(
+                                conversation_id, capabilities, client_id, platform
+                            )
+                            logger.info(f"LLM Orchestrator: Registered client tools for conv_id {conversation_id}: {list(capabilities.keys())}")
+                        else:
+                            logger.warning(f"LLM Orchestrator: Invalid client capability registration: {event_data}")
+                    else:
+                        logger.debug(f"LLM Orchestrator: Ignoring client capability event type: {event_type}")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"LLM Orchestrator: Error decoding client capability JSON: {e} - Data: {message_data_str}")
+                except Exception as e:
+                    logger.error(f"LLM Orchestrator: Error processing client capability event: {e}", exc_info=True)
+            elif message is None:
+                await asyncio.sleep(0.01)
+                
+        except redis.exceptions.ConnectionError as e:
+            logger.error(f"LLM Orchestrator: Redis connection error in client capabilities loop: {e}. Retrying...", exc_info=True)
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"LLM Orchestrator: Error in client capabilities subscription loop: {e}", exc_info=True)
+            await asyncio.sleep(1)
+    
+    await pubsub.unsubscribe(orchestrator_settings.CLIENT_CAPABILITIES_CHANNEL)
+    await pubsub.close()
+    logger.info(f"LLM Orchestrator: Unsubscribed and closed pubsub for client capabilities channel: {orchestrator_settings.CLIENT_CAPABILITIES_CHANNEL}.")
+
 def signal_handler_orchestrator(signum, frame):
     global running
     logger.info(f"Signal {signum} received by orchestrator, shutting down...")
@@ -442,13 +497,17 @@ async def main_async_orchestrator():
         connection_events_task = asyncio.create_task(
             subscribe_to_connection_events(redis_client, llm_service_instance)
         )
+        client_capabilities_task = asyncio.create_task(
+            subscribe_to_client_capabilities(redis_client, tool_router_instance)
+        )
         
         logger.info("LLM Orchestrator has started successfully and is now processing.")
 
         await asyncio.gather(
             transcript_subscriber_task,
             barge_in_subscriber_task,
-            connection_events_task
+            connection_events_task,
+            client_capabilities_task
         )
 
     except ConnectionRefusedError as e:
@@ -464,6 +523,7 @@ async def main_async_orchestrator():
         if transcript_subscriber_task: transcript_subscriber_task.cancel()
         if barge_in_subscriber_task: barge_in_subscriber_task.cancel()
         if connection_events_task: connection_events_task.cancel()
+        if client_capabilities_task: client_capabilities_task.cancel()
         # Wait for tasks to cancel (optional, depends on task cleanup needs)
         # if transcript_subscriber_task or barge_in_subscriber_task:
         #    await asyncio.sleep(0.5) 

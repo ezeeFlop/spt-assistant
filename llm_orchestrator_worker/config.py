@@ -18,6 +18,12 @@ class OrchestratorSettings(BaseSettings):
     TTS_CONTROL_CHANNEL: str = "tts_control_channel"   # Channel to publish TTS control commands (e.g., stop)
     BARGE_IN_CHANNEL: str = "barge_in_notifications"  # Channel to subscribe to for barge-in events
     CONNECTION_EVENTS_CHANNEL: str = "connection_events"  # Channel to receive connection lifecycle events
+    
+    # Client tool channels for macOS and other client-specific tools
+    CLIENT_TOOL_REQUEST_CHANNEL: str = "client_tool_request"    # Channel to send tool requests to clients
+    CLIENT_TOOL_RESPONSE_CHANNEL: str = "client_tool_response"  # Channel to receive tool responses from clients
+    CLIENT_CAPABILITIES_CHANNEL: str = "client_capabilities"    # Channel for client capability registration
+    
     CONVERSATION_CONFIG_PREFIX: str = "conversation_config:" # Redis key prefix for storing conversation configs
     CONVERSATION_HISTORY_PREFIX: str = "conversation_history:" # Redis key prefix for history
     CONVERSATION_DATA_TTL_SECONDS: int = 24 * 60 * 60 # TTL for conversation data in Redis (e.g., 1 day)

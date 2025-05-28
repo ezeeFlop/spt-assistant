@@ -58,6 +58,9 @@ class AudioManager: NSObject, ObservableObject {
     var onAudioChunk: ((Data) -> Void)?
     var onPlaybackFinished: (() -> Void)?
     
+    // MARK: - Tap Management
+    private var hasTapInstalled = false
+    
     override init() {
         super.init()
         setupAudioEngine()
@@ -76,6 +79,9 @@ class AudioManager: NSObject, ObservableObject {
         // Attach nodes
         audioEngine.attach(playerNode)
         audioEngine.attach(mixerNode)
+        
+        // Reset tap state
+        hasTapInstalled = false
         
         // Setup audio formats
         setupAudioFormats()
@@ -403,6 +409,20 @@ class AudioManager: NSObject, ObservableObject {
                 try setInputDevice(device)
             }
             
+            // CRITICAL FIX: Check if engine formats are corrupted and reinitialize if needed
+            let inputFormat = inputNode.inputFormat(forBus: 0)
+            let outputFormat = outputNode.outputFormat(forBus: 0)
+            
+            if inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 || 
+               outputFormat.sampleRate == 0 || outputFormat.channelCount == 0 {
+                print("🔧 Detected corrupted audio formats - reinitializing engine")
+                print("   - Current input: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch")
+                print("   - Current output: \(outputFormat.sampleRate)Hz, \(outputFormat.channelCount)ch")
+                
+                // Completely reinitialize the audio engine
+                setupAudioEngine()
+            }
+            
             // CRITICAL FIX: Setup voice processing BEFORE starting engine
             // Following Apple's WWDC 2019 documentation requirements
             if engineNeedsVoiceProcessingSetup && !audioEngine.isRunning {
@@ -413,9 +433,7 @@ class AudioManager: NSObject, ObservableObject {
             // Install tap on input node to capture audio
             // With voice processing enabled, this will automatically filter
             // assistant voice from being picked up by the microphone
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
-                self?.processInputBuffer(buffer)
-            }
+            try safelyInstallTap()
             
             // Start the audio engine
             try audioEngine.start()
@@ -445,12 +463,7 @@ class AudioManager: NSObject, ObservableObject {
         
         // CRITICAL FIX: Remove the input tap safely
         // Check if the node actually has a tap before removing it
-        do {
-            inputNode.removeTap(onBus: 0)
-            print("Removed input tap successfully")
-        } catch {
-            print("Warning: Failed to remove input tap: \(error)")
-        }
+        safelyRemoveTap()
         
         // CRITICAL FIX: Only stop the engine if playback is not active
         // If playback is active, the engine will be managed by the playback system
@@ -1141,7 +1154,7 @@ class AudioManager: NSObject, ObservableObject {
                 
                 // Remove input tap first
                 if wasRecording {
-                    inputNode.removeTap(onBus: 0)
+                    safelyRemoveTap()
                     print("Removed input tap for reconfiguration")
                 }
                 
@@ -1219,16 +1232,11 @@ class AudioManager: NSObject, ObservableObject {
             }
             
             // If recording was active, we need to reinstall the input tap
-            if wasEngineRunning && !isRecording {
-                // Recording was stopped when we stopped the engine, but it should be active
-                // This shouldn't happen in normal flow, but just in case
-                print("Warning: Engine was running but recording flag was false")
-            } else if wasEngineRunning && isRecording {
-                // Reinstall the input tap since we stopped the engine
-                inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
-                    self?.processInputBuffer(buffer)
-                }
-                print("Reinstalled input tap after engine restart")
+            if wasRecording {
+                try safelyInstallTap()
+                // Update the recording flag since we reinstalled the tap
+                isRecording = true
+                print("Reinstalled input tap for recording")
             }
             
             // Now start the player node - it should be properly connected now
@@ -1350,10 +1358,30 @@ class AudioManager: NSObject, ObservableObject {
                 print("🎵 No more sentences in queue, but still accumulating - keeping playback active")
                 // Don't set isPlayingAudio = false! Keep it true so next sentence doesn't reset
             } else {
-                // Not accumulating new sentence and no queue - safe to stop
+                // Not accumulating new sentence and no queue - playback session complete
                 print("🎵 All sentences played and no new sentence accumulating, stopping playback")
-                isPlayingAudio = false  // NOW it's safe to mark as not playing
+                
+                // CRITICAL FIX: Instead of calling stopAudioPlayback() which can corrupt the engine,
+                // gracefully transition to recording-only mode while keeping the engine running
+                isPlayingAudio = false
+                
+                // Stop player node but keep engine running
+                if playerNode.isPlaying {
+                    playerNode.stop()
+                    print("🎵 Stopped player node (engine continues running)")
+                }
+                
+                // Clear playback queues but keep engine state intact
+                playbackQueueLock.lock()
+                currentSentenceChunks.removeAll()
+                sentenceQueue.removeAll()
+                isAccumulatingSentence = false
+                playbackQueueLock.unlock()
+                
+                // Call the callback to notify UI
                 onPlaybackFinished?()
+                
+                print("🎵 Playback session complete - engine remains active for recording")
             }
         }
     }
@@ -1496,7 +1524,7 @@ class AudioManager: NSObject, ObservableObject {
                 
                 // Remove input tap first
                 if wasRecording {
-                    inputNode.removeTap(onBus: 0)
+                    safelyRemoveTap()
                     print("Removed input tap for reconfiguration")
                 }
                 
@@ -1548,9 +1576,7 @@ class AudioManager: NSObject, ObservableObject {
             
             // Reinstall input tap if recording was active
             if wasRecording {
-                inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
-                    self?.processInputBuffer(buffer)
-                }
+                try safelyInstallTap()
                 // Update the recording flag since we reinstalled the tap
                 isRecording = true
                 print("Reinstalled input tap for recording")
@@ -1564,6 +1590,46 @@ class AudioManager: NSObject, ObservableObject {
             
         } catch {
             print("Failed to setup audio engine for playback: \(error)")
+        }
+    }
+    
+    // MARK: - Tap Management
+    private func safelyInstallTap() throws {
+        // CRITICAL FIX: Always ensure any existing tap is removed first
+        if hasTapInstalled {
+            print("🔧 Removing existing tap before installing new one")
+            do {
+                inputNode.removeTap(onBus: 0)
+                hasTapInstalled = false
+                print("✅ Successfully removed existing tap")
+            } catch {
+                print("⚠️ Warning: Failed to remove existing tap: \(error)")
+                // Continue anyway - the install might still work
+            }
+        }
+        
+        // Install the new tap
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
+            self?.processInputBuffer(buffer)
+        }
+        hasTapInstalled = true
+        print("✅ Successfully installed new input tap")
+    }
+    
+    private func safelyRemoveTap() {
+        guard hasTapInstalled else {
+            print("🔧 No tap to remove (already removed)")
+            return
+        }
+        
+        do {
+            inputNode.removeTap(onBus: 0)
+            hasTapInstalled = false
+            print("✅ Successfully removed input tap")
+        } catch {
+            print("⚠️ Warning: Failed to remove input tap: \(error)")
+            // Force reset the flag anyway
+            hasTapInstalled = false
         }
     }
 } 
